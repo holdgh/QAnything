@@ -56,6 +56,7 @@ async def init_local_doc_qa(app, loop):
     local_doc_qa.init_cfg(args)
     end = time.time()
     print(f'init local_doc_qa cost {end - start}s', flush=True)
+    # 很多接口都用到这个上下文
     app.ctx.local_doc_qa = local_doc_qa
 
 

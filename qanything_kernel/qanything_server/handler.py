@@ -657,6 +657,10 @@ async def clean_files_by_status(req: request):
 
 @get_time_async
 async def local_doc_chat(req: request):
+    """
+    问答接口
+    """
+    # time.perf_counter()返回性能计数器的值（以小数秒为单位）作为浮点数，即具有最高可用分辨率的时钟，以测量短持续时间。 它确实包括睡眠期间经过的时间，并且是系统范围的。
     preprocess_start = time.perf_counter()
     local_doc_qa: LocalDocQA = req.app.ctx.local_doc_qa
     user_id = safe_get(req, 'user_id')
