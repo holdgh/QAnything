@@ -178,7 +178,17 @@ async def upload_weblink(req: request):
 @get_time_async
 async def upload_files(req: request):
     """
-    上传文件
+    功能：上传文件
+    流程：
+        1、校验用户合法性
+        2、校验知识库合法性
+        3、对于一个知识库，数据库已存在的文件列表和入参中的文件列表总数不得超过10000
+        4、对于入参中的文件名处理【清洗、拼接】
+        5、获取知识库已存在的文件名列表，上传模式默认soft，跳过入参中在数据库里已存在的文件
+        6、上传文件至根目录下\QANY_DB\content\user_id【此处未使用minio】
+        7、评估文件字符尺寸，若超过100万，则将文件至于失败文件列表中
+        8、将上述校验处理通过的文件信息连同知识库id、用户id一并插入数据库中
+        9、构造接口返回值
     """
     local_doc_qa: LocalDocQA = req.app.ctx.local_doc_qa
     user_id = safe_get(req, 'user_id')
