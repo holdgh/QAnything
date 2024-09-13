@@ -1,5 +1,6 @@
 #!/bin/bash
-
+# 注意当前脚本是qanything的容器中执行的
+# 检查日志错误信息
 check_log_errors() {
     local log_file=$1  # 将第一个参数赋值给变量log_file，表示日志文件的路径
 
@@ -57,6 +58,11 @@ fi
 cd /workspace/QAnything || exit
 
 echo "embedding和rerank服务将在CPU上运行"
+# nohup命令可以后台启动服务，并输出日志到指定文件
+# >用于将命令的“标准输出”重定向到指定的文件中
+# 2>表示将命令的“标准错误”重定向到指定的文件中
+# 2>&1表示将命令的“标准错误”重定向到“标准输出”1中一起输出
+# & 后台挂起
 nohup python3 -u qanything_kernel/dependent_server/rerank_server/rerank_server.py > /workspace/QAnything/logs/debug_logs/rerank_server.log 2>&1 &
 PID1=$!
 nohup python3 -u qanything_kernel/dependent_server/embedding_server/embedding_server.py > /workspace/QAnything/logs/debug_logs/embedding_server.log 2>&1 &

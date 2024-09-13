@@ -36,6 +36,7 @@ parser.add_argument('--workers', type=int, default=4, help='workers')
 args = parser.parse_args()
 
 start_time = time.time()
+# qanything服务所有的业务接口
 app = Sanic("QAnything")
 app.config.CORS_ORIGINS = "*"
 Extend(app)
@@ -43,9 +44,11 @@ Extend(app)
 app.config.REQUEST_MAX_SIZE = 128 * 1024 * 1024
 
 # 将 /qanything 路径映射到 ./dist/qanything 文件夹，并指定路由名称
+# 前端页面部署
 app.static('/qanything/', 'qanything_kernel/qanything_server/dist/qanything/', name='qanything', index="index.html")
 
 
+# 服务启动前执行
 @app.before_server_start
 async def init_local_doc_qa(app, loop):
     start = time.time()
@@ -54,11 +57,15 @@ async def init_local_doc_qa(app, loop):
     end = time.time()
     print(f'init local_doc_qa cost {end - start}s', flush=True)
     app.ctx.local_doc_qa = local_doc_qa
-    
+
+
+# 服务启动后执行
 @app.after_server_start
 async def notify_server_started(app, loop):
     print(f"Server Start Cost {time.time() - start_time} seconds", flush=True)
 
+
+# 服务启动后执行
 @app.after_server_start
 async def start_server_and_open_browser(app, loop):
     try:
@@ -70,7 +77,7 @@ async def start_server_and_open_browser(app, loop):
 
 # app.add_route(lambda req: response.redirect('/api/docs'), '/')
 # tags=["新建知识库"]
-app.add_route(document, "/api/docs", methods=['GET'])
+app.add_route(document, "/api/docs", methods=['GET'])  # tags=["qanything介绍"]
 app.add_route(health_check, "/api/health_check", methods=['GET'])  # tags=["健康检查"]
 app.add_route(new_knowledge_base, "/api/local_doc_qa/new_knowledge_base", methods=['POST'])  # tags=["新建知识库"]
 app.add_route(upload_weblink, "/api/local_doc_qa/upload_weblink", methods=['POST'])  # tags=["上传网页链接"]

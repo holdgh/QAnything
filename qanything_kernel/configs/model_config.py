@@ -11,6 +11,8 @@ GATEWAY_IP = os.getenv("GATEWAY_IP", "localhost")
 # 获取项目根目录
 # 获取当前脚本的绝对路径
 current_script_path = os.path.abspath(__file__)
+# os.path.dirname(path)取path的上一级路径
+# 嵌套使用三次，返回上三级路径
 root_path = os.path.dirname(os.path.dirname(os.path.dirname(current_script_path)))
 UPLOAD_ROOT_PATH = os.path.join(root_path, "QANY_DB", "content")
 IMAGES_ROOT_PATH = os.path.join(root_path, "qanything_kernel/qanything_server/dist/qanything/assets", "file_images")

@@ -306,15 +306,26 @@ class KnowledgeBaseManager:
         return result is not None and len(result) > 0
 
     def check_kb_exist(self, user_id, kb_ids):
+        """
+        检查知识库是否存在
+        """
         if not kb_ids:
+            # 如果知识库id列表为空，则返回空列表
             return []
+        # 将知识库id列表以逗号隔开拼接为字符串
         kb_ids_str = ','.join("'{}'".format(str(x)) for x in kb_ids)
+        # 构造SQL查询语句，查询条件为：知识库id列表、逻辑未删除、用户id
         query = "SELECT kb_id FROM KnowledgeBase WHERE kb_id IN ({}) AND deleted = 0 AND user_id = %s".format(
             kb_ids_str)
+        # 执行SQL
         result = self.execute_query_(query, (user_id,), fetch=True)
+        # 日志打印查询结果
         debug_logger.info("check_kb_exist {}".format(result))
+        # 从查询结果中查询出有效知识库id列表
         valid_kb_ids = [kb_info[0] for kb_info in result]
+        # 将入参知识库id去重并与有效知识库id集合做差集，得出无效知识库id列表
         unvalid_kb_ids = list(set(kb_ids) - set(valid_kb_ids))
+        # 返回无效知识库id列表
         return unvalid_kb_ids
 
     def get_file_by_status(self, kb_ids, status):
@@ -365,8 +376,11 @@ class KnowledgeBaseManager:
 
             # 使用参数化查询，将文件名作为参数传递
             query_params = batch_file_names + [kb_id, user_id]
+            # 执行查询语句
             batch_result = self.execute_query_(query, query_params, fetch=True)
             debug_logger.info("check_file_exist_by_name batch {}: {}".format(i // batch_size, batch_result))
+            # 将查询结果【已存在的文件信息】收集到结果中
+            # 列表的extend方法：在列表末尾一次性追加另一个序列中的多个值
             results.extend(batch_result)
 
         return results
@@ -439,8 +453,17 @@ class KnowledgeBaseManager:
     # [文件] 向指定知识库下面增加文件
     def add_file(self, file_id, user_id, kb_id, file_name, file_size, file_location, chunk_size, timestamp, file_url='',
                  status="gray"):
+        """
+        整体流程：向数据库插入文件信息
+        参数解释：
+        file_size：文件内容尺寸
+        file_location：文件存储路径
+        chunk_size：文件切片尺寸
+        """
+        # 构造插入语句
         query = ("INSERT INTO File (file_id, user_id, kb_id, file_name, status, file_size, file_location, chunk_size, "
                  "timestamp, file_url) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        # 执行插入
         self.execute_query_(query,
                             (file_id, user_id, kb_id, file_name, status, file_size, file_location, chunk_size, timestamp, file_url),
                             commit=True)
@@ -466,10 +489,11 @@ class KnowledgeBaseManager:
         self.execute_query_(query, (to_status, from_status), commit=True)
 
     def get_files(self, user_id, kb_id, file_id=None):
+        # 构造查询语句
         limit = 100
         offset = 0
         all_files = []
-
+        # 查询条件：知识库id、逻辑未删除
         base_query = """
             SELECT file_id, file_name, status, file_size, content_length, timestamp,
                    file_location, file_url, chunk_size, msg
@@ -478,27 +502,33 @@ class KnowledgeBaseManager:
         """
 
         params = [kb_id]
-
+        # 如果存在领域条件，则在查询语句中追加领域条件
         if file_id is not None:
             base_query += " AND file_id = %s"
             params.append(file_id)
             # Since file_id is specified, we only need one query
             query = base_query
             current_params = params
+            # 执行查询语句
             files = self.execute_query_(query, current_params, fetch=True)
+            # 返回查询结果：文件信息
             return files
-
+        # 如果不存在领域条件
         while True:
+            # 查询语句拼接分页参数【每页100条】
             query = base_query + " LIMIT %s OFFSET %s"
             current_params = params + [limit, offset]
+            # 执行查询语句
             files = self.execute_query_(query, current_params, fetch=True)
 
             if not files:
+                # 查询结果为空时，跳出循环
                 break
-
+            # 收集当前页【单批次】查询结果【<=100条】
             all_files.extend(files)
+            # 更新偏移数量，实现分页查询
             offset += limit
-
+        # 返回查询结果
         return all_files
 
     def get_total_status_by_date(self, user_id):

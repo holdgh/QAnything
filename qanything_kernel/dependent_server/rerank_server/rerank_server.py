@@ -35,6 +35,7 @@ async def rerank(request):
     data = request.json
     query = data.get('query')
     passages = data.get('passages')
+    # 这是什么语法？
     onnx_backend: RerankAsyncBackend = request.app.ctx.onnx_backend
     result_data = await onnx_backend.get_rerank_async(query, passages)
     # print("local rerank query:", query, flush=True)

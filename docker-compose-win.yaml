@@ -1,25 +1,36 @@
 services:
+#  es配置信息
   elasticsearch:
+#    docker容器名称
     container_name: es-container-local
+#    服务镜像
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.2
     user: root
     privileged: true
+#    对外暴露的端口
     ports:
       - "9210:9200"
+#    失败时自动重启
     restart: on-failure
+#    环境变量配置，类似docker run -e
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms1024m -Xmx1024m"
+#   挂载一个目录或一个已存在的数据卷容器【对于容器而言，数据卷是只读的，以保护宿主机的文件系统】
     volumes:
+#    下述挂载目录，/third_party/es/plugins在当前项目，/usr/share/elasticsearch/plugins是容器中的目录，见下述command
       - ${DOCKER_VOLUME_DIRECTORY:-.}/third_party/es/plugins:/usr/share/elasticsearch/plugins
+#      /volumes/es/data在哪里？/usr/share/elasticsearch/data是容器中的目录，见下述command
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/es/data:/usr/share/elasticsearch/data
+#   容器启动后默认执行的命令
     command: >
       /bin/bash -c "
           mkdir -p /usr/share/elasticsearch/data /usr/share/elasticsearch/plugins &&
           chown -R elasticsearch:elasticsearch /usr/share/elasticsearch &&
           su elasticsearch -c '/usr/share/elasticsearch/bin/elasticsearch'
       "
+#      健康检查
     healthcheck:
       test: curl --fail http://localhost:9200/_cat/health || exit 1
       interval: 10s
@@ -54,6 +65,7 @@ services:
     #       - "9000:9000"
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+#    容器启动后，设置minio文件存储目录和服务端口
     command: minio server /minio_data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
@@ -85,6 +97,7 @@ services:
       retries: 3
     ports:
       - "19540:19530"
+#    表示服务之间的依赖关系。docker-compose up 按依赖顺序启动服务，docker-compose stop按依赖顺序停止服务。下述配置表示etcd和minio在standalone之前启动；standalone在etcd和minio之前停止
     depends_on:
       - "etcd"
       - "minio"
@@ -95,6 +108,7 @@ services:
     image: mysql:8.4
     ports:
       - "3316:3306"
+#    容器启动后，设置MySQL最大连接数
     command: --max-connections=10000
     environment:
       - MYSQL_ROOT_PASSWORD=123456
@@ -105,6 +119,7 @@ services:
   qanything_local:
     container_name: qanything-container-local
     image: xixihahaliu01/qanything-win:v1.5.1
+#    容器启动后，运行脚本scripts/entrypoint.sh
     command: /bin/bash -c "cd /workspace/QAnything && bash scripts/entrypoint.sh"
     privileged: true
     shm_size: '8gb'
@@ -117,6 +132,7 @@ services:
       - GPUID=${GPUID:-0}
       - USER_IP=${USER_IP:-0.0.0.0}
       - GATEWAY_IP=host.docker.internal
+#    qanything依赖standalone【服务健康】、MySQL【服务已启动】、es【服务健康】
     depends_on:
       standalone:
         condition: service_healthy

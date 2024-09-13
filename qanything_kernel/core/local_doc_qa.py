@@ -32,6 +32,7 @@ import traceback
 import re
 
 
+# 问答系统的主体类
 class LocalDocQA:
     def __init__(self, port):
         self.port = port

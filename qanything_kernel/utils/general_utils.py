@@ -93,6 +93,10 @@ def format_time_record(time_record):
 
 
 def safe_get(req: Request, attr: str, default=None):
+    """
+    从请求中获取指定参数attr
+    支持表单、请求体、路径参数
+    """
     try:
         if attr in req.form:
             return req.form.getlist(attr)[0]
@@ -128,12 +132,15 @@ def truncate_filename(filename, max_length=200):
     # 如果文件名长度超过最大长度限制
     if filename_length > max_length:
         debug_logger.warning("文件名长度超过最大长度限制，将截取文件名")
-        # 生成一个时间戳标记
+        # 生成一个时间戳标记【1726207066】
         timestamp = str(int(time.time()))
         # 截取文件名
         while filename_length > max_length:
+            # 从尾部去除4个字符，截取
             file_name_no_ext = file_name_no_ext[:-4]
+            # 将截取后的文件前缀名与时间戳以_拼接，并追加文件后缀名
             new_filename = file_name_no_ext + "_" + timestamp + file_ext
+            # 计算截取拼接后的文件名长度
             filename_length = len(new_filename.encode('utf-8'))
     else:
         new_filename = filename
@@ -314,9 +321,12 @@ def clear_string_is_equal(str1, str2):
 
 
 def correct_kb_id(kb_id):
+    """
+    对知识库id参数进行处理
+    """
     if not kb_id:
         return kb_id
-    # 如果kb_id末尾不是KB_SUFFIX,则加上
+    # 如果kb_id末尾不是KB_SUFFIX【_240625】,则加上
     if KB_SUFFIX not in kb_id:
         if kb_id.endswith('_FAQ'):  # KBc86eaa3f278f4ef9908780e8e558c6eb_FAQ
             return kb_id.split('_FAQ')[0] + KB_SUFFIX + '_FAQ'
@@ -513,40 +523,64 @@ def fast_estimate_file_char_count(file_path):
     """
     快速估算文件的字符数，如果超过max_chars则返回False，否则返回True
     """
+    # 获取文件扩展名
     file_extension = os.path.splitext(file_path)[1].lower()
 
     try:
+        # 依据文件扩展名来分类评估文件大小
         if file_extension in ['.md', '.txt', '.csv']:
+            # markdown、txt、csv文件
+            # 以二进制方式读取文件，获取编码格式
             with open(file_path, 'rb') as file:
+                # 从文件读取1024个字节
                 raw = file.read(1024)
+                # 获取文件内容的编码格式
                 encoding = chardet.detect(raw)['encoding']
+            # 利用获取到的编码格式读取文件，逐行计算文件字符长度
             with open(file_path, 'r', encoding=encoding) as file:
                 char_count = sum(len(line) for line in file)
 
         elif file_extension == '.pdf':
+            # pdf文件
+            # 利用工具读取pdf文件到doc
             doc = fitz.open(file_path)
+            # 逐页计算文件字符长度
             char_count = sum(len(page.get_text()) for page in doc)
+            # 关闭doc
             doc.close()
 
         elif file_extension in ['.jpg', '.png', '.jpeg']:
+            # 图片文件
             # 图片文件无法准确估算字符数，返回True让后续OCR处理
             return None
 
         elif file_extension == '.docx':
+            # word文档
+            # 利用工具读取word文档文本内容
             text = docx2txt.process(file_path)
+            # 计算文本长度
             char_count = len(text)
 
         elif file_extension == '.xlsx':
+            # excel文件
+            # 利用工具读取excel文件到工作簿
             wb = openpyxl.load_workbook(file_path, read_only=True)
+            # 从工作簿中读取表格，从表格中读取数据行，从数据行中读取单元格，逐单元格计算长度
             char_count = sum(len(str(cell.value or '')) for sheet in wb for row in sheet.iter_rows() for cell in row)
+            # 关闭工作簿
             wb.close()
 
         elif file_extension == '.pptx':
+            # ppt文件
+            # 利用工具读取文件
             prs = Presentation(file_path)
+            # 从画布读取形状，对含有文本的形状，逐形状计算文本长度
             char_count = sum(
                 len(shape.text) for slide in prs.slides for shape in slide.shapes if hasattr(shape, 'text'))
 
         elif file_extension == '.eml':
+            # eml文件，邮件类文档
+            # 以utf8格式读取文件，利用工具从文件中获取消息文本，计算文本长度
             with open(file_path, 'r', encoding='utf-8') as file:
                 msg = email.message_from_file(file)
                 char_count = len(str(msg))
@@ -554,7 +588,7 @@ def fast_estimate_file_char_count(file_path):
         else:
             # 不支持的文件类型
             return None
-
+        # 返回文本长度
         return char_count
 
     except Exception as e:

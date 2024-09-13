@@ -177,35 +177,50 @@ async def upload_weblink(req: request):
 
 @get_time_async
 async def upload_files(req: request):
+    """
+    上传文件
+    """
     local_doc_qa: LocalDocQA = req.app.ctx.local_doc_qa
     user_id = safe_get(req, 'user_id')
     user_info = safe_get(req, 'user_info', "1234")
+    # 校验用户信息合法性
     passed, msg = check_user_id_and_user_info(user_id, user_info)
+    # 校验用户不合法时，返回提示信息
     if not passed:
         return sanic_json({"code": 2001, "msg": msg})
+    # 拼接用户id
     user_id = user_id + '__' + user_info
     debug_logger.info("upload_files %s", user_id)
     debug_logger.info("user_info %s", user_info)
+    # 获取入参中的知识库id，并进行一定规则处理
     kb_id = safe_get(req, 'kb_id')
     kb_id = correct_kb_id(kb_id)
     debug_logger.info("kb_id %s", kb_id)
     mode = safe_get(req, 'mode', default='soft')  # soft代表不上传同名文件，strong表示强制上传同名文件
     debug_logger.info("mode: %s", mode)
+    # 获取文件切片尺寸大小，默认800个token
     chunk_size = safe_get(req, 'chunk_size', default=DEFAULT_PARENT_CHUNK_SIZE)
     debug_logger.info("chunk_size: %s", chunk_size)
+    # 获取是否使用本地文件参数，默认false
     use_local_file = safe_get(req, 'use_local_file', 'false')
     if use_local_file == 'true':
+        # 本地获取，从当前项目的根目录下/data文件夹中获取文件
         files = read_files_with_extensions()
     else:
+        # 非本地获取，从请求中获取文件
         files = req.files.getlist('files')
+    # 打印文件数量
     debug_logger.info(f"{user_id} upload files number: {len(files)}")
+    # 检查知识库id在数据库中是否存在，返回的是无效知识库id列表
     not_exist_kb_ids = local_doc_qa.milvus_summary.check_kb_exist(user_id, [kb_id])
     if not_exist_kb_ids:
+        # 若入参中的知识库id存在无效的，则返回提示信息
         msg = "invalid kb_id: {}, please check...".format(not_exist_kb_ids)
         return sanic_json({"code": 2001, "msg": msg, "data": [{}]})
-
+    # 根据知识库id和用户id查询文件列表
     exist_files = local_doc_qa.milvus_summary.get_files(user_id, kb_id)
     if len(exist_files) + len(files) > 10000:
+        # 如果数据库中知识库已有文件数量和入参中文件数量之和大于10000，则超出知识库文件数量限制，返回提示信息
         return sanic_json({"code": 2002,
                            "msg": f"fail, exist files is {len(exist_files)}, upload files is {len(files)}, total files is {len(exist_files) + len(files)}, max length is 10000."})
 
@@ -214,9 +229,12 @@ async def upload_files(req: request):
     file_names = []
     for file in files:
         if isinstance(file, str):
+            # 如果file为字符串，则为本地文件绝对路径，通过os.path.basename获取文件名
             file_name = os.path.basename(file)
         else:
+            # 如果file为入参中的文件对象，则通过file.name获取文件名
             debug_logger.info('ori name: %s', file.name)
+            # 解码文件名
             file_name = urllib.parse.unquote(file.name, encoding='UTF-8')
             debug_logger.info('decode name: %s', file_name)
         # # 使用正则表达式替换以%开头的字符串
@@ -225,14 +243,19 @@ async def upload_files(req: request):
         file_name = re.sub(r'[\uFF01-\uFF5E\u3000-\u303F]', '', file_name)
         debug_logger.info('cleaned name: %s', file_name)
         # max_length = 255 - len(construct_qanything_local_file_nos_key_prefix(file_id)) == 188
+        # 对于文件名做处理：对文件名前缀拼接时间戳，并校验文件全名长度不超过110，若超过，则对文件名前缀【未拼接时间戳】进行截取
         file_name = truncate_filename(file_name, max_length=110)
+        # 收集文件名到文件名列表
         file_names.append(file_name)
 
     exist_file_names = []
     if mode == 'soft':
+        # 若上传模式为soft，则知识库内存在同名文件时当前文件不再上传
+        # 检查文件名列表在数据库中是否存在，输出已存在的文件名
         exist_files = local_doc_qa.milvus_summary.check_file_exist_by_name(user_id, kb_id, file_names)
         exist_file_names = [f[1] for f in exist_files]
         for exist_file in exist_files:
+            # 日志打印已存在的文件名
             file_id, file_name, file_size, status = exist_file
             debug_logger.info(f"{file_name}, {status}, existed files, skip upload")
             # await post_data(user_id, -1, file_id, status, msg='existed files, skip upload')
@@ -241,29 +264,41 @@ async def upload_files(req: request):
     timestamp = now.strftime("%Y%m%d%H%M")
 
     failed_files = []
+    # 将文件列表与文件名列表按照【文件-文件名】一一匹配分组，遍历处理
     for file, file_name in zip(files, file_names):
+        # 跳过已存在的文件
         if file_name in exist_file_names:
             continue
+        # 创建local_file对象，依赖参数：用户id、知识库id、文件、文件名
         local_file = LocalFile(user_id, kb_id, file, file_name)
+        # 评估文件大小【local_file.file_location属性，仅对入参文件有意义，对于本地文件，该字段为'URL'】，返回文件字符数量
         chars = fast_estimate_file_char_count(local_file.file_location)
         debug_logger.info(f"{file_name} char_size: {chars}")
         if chars and chars > MAX_CHARS:
+            # 文件超过100万个字符，则给出警告日志，并将文件名追加到失败列表文件列表中，然后对下一个文件进行处理
             debug_logger.warning(f"fail, file {file_name} chars is {chars}, max length is {MAX_CHARS}.")
             # return sanic_json({"code": 2003, "msg": f"fail, file {file_name} chars is too much, max length is {MAX_CHARS}."})
+            # 列表的append方法：在列表末尾添加新的对象
             failed_files.append(file_name)
             continue
+        # 从local_file对象中获取文件id【uuid】
         file_id = local_file.file_id
+        # 获取文件内容尺寸
         file_size = len(local_file.file_content)
         file_location = local_file.file_location
+        # 将local_file收集到local_files列表中，这些文件都是校验通过的文件
         local_files.append(local_file)
+        # 上传文件【文件信息添加到数据库中】
         msg = local_doc_qa.milvus_summary.add_file(file_id, user_id, kb_id, file_name, file_size, file_location,
                                                    chunk_size, timestamp)
         debug_logger.info(f"{file_name}, {file_id}, {msg}")
+        # 文件上传结果字段：file_id，file_name，status【gray，什么意思？】，bytes【文件内容长度】，timestamp【时间戳】，estimated_chars【文件字符长度】
         data.append(
             {"file_id": file_id, "file_name": file_name, "status": "gray", "bytes": len(local_file.file_content),
              "timestamp": timestamp, "estimated_chars": chars})
 
     # asyncio.create_task(local_doc_qa.insert_files_to_milvus(user_id, kb_id, local_files))
+    # 构造文件上传结果的提示信息
     if exist_file_names:
         msg = f'warning，当前的mode是soft，无法上传同名文件{exist_file_names}，如果想强制上传同名文件，请设置mode：strong'
     elif failed_files:
