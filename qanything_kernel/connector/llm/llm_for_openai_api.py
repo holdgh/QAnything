@@ -31,13 +31,15 @@ class OpenAILLM:
             self.temperature = temperature
         self.use_cl100k_base = False
         try:
+            # 获取指定模型的编码器
             self.tokenizer = tiktoken.encoding_for_model(model)
         except Exception as e:
+            # 如果指定的模型在tiktoken中找不到，则使用cl100k_base模型，并获取其编码器
             debug_logger.warning(f"{model} not found in tiktoken, using cl100k_base!")
             self.tokenizer = tiktoken.get_encoding("cl100k_base")
             self.use_cl100k_base = True
 
-
+        # 设置openai请求客户端
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         debug_logger.info(f"OPENAI_API_KEY = {api_key}")
         debug_logger.info(f"OPENAI_API_BASE = {base_url}")
@@ -54,21 +56,27 @@ class OpenAILLM:
     # 定义函数 num_tokens_from_messages，该函数返回由一组消息所使用的token数
     def num_tokens_from_messages(self, messages):
         total_tokens = 0
+        # 遍历提示词列表，逐个计算使用的token数量
         for message in messages:
             if isinstance(message, dict):
                 # 对于字典类型的消息，我们假设它包含 'role' 和 'content' 键
                 for key, value in message.items():
+                    # 设置key的token数量为3
                     total_tokens += 3  # role的开销(key的开销)
                     if isinstance(value, str):
+                        # 使用指定模型的编码器对value进行编码得到对应的token列表
                         tokens = self.tokenizer.encode(value, disallowed_special=())
+                        # 累加收集token数量
                         total_tokens += len(tokens)
             elif isinstance(message, str):
                 # 对于字符串类型的消息，直接编码
                 tokens = self.tokenizer.encode(message, disallowed_special=())
                 total_tokens += len(tokens)
             else:
+                # 非字典、非字符串的提示词【消息】，抛出异常【不支持的消息类型】
                 raise ValueError(f"Unsupported message type: {type(message)}")
         if self.use_cl100k_base:
+            # 如果使用了
             total_tokens *= 1.2
         return total_tokens
 
@@ -80,6 +88,7 @@ class OpenAILLM:
             # 累加tokens数量
             total_tokens += len(tokens)
         if self.use_cl100k_base:
+            # 如果使用了cl100k_base模型，则对token数量乘以1.2
             total_tokens *= 1.2
         return total_tokens
 

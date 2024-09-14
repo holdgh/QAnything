@@ -107,6 +107,15 @@ class LocalDocQA:
 
     @get_time_async
     async def get_source_documents(self, query, retriever: ParentRetriever, kb_ids, time_record, hybrid_search, top_k):
+        """
+        获取源文档列表
+        kb_ids：知识库id列表、
+        query【检索答案用到的问题，最终问题】、
+        time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、
+        retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】
+        hybrid_search：是否联网搜索
+        top_k：值越大，结果越呈现多样性
+        """
         source_documents = []
         start_time = time.perf_counter()
         query_docs = await retriever.get_retrieved_documents(query, partition_keys=kb_ids, time_record=time_record,
@@ -368,35 +377,66 @@ class LocalDocQA:
                                          chat_history=None, streaming: bool = STREAMING, rerank: bool = False,
                                          only_need_search_results: bool = False, need_web_search=False,
                                          hybrid_search=False):
+        """
+        获取知识库答案
+        流程：
+            1、获取openai大模型对象【内含指定模型的编码器】
+            2、利用历史对话记录列表和当前问题进行重构，生成独立且语义完整的新问题retrieval_query
+            3、依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档列表
+            4、判断是否开启联网搜索，若开启，则依据当前问题进行联网搜索，并将搜索到的文档追加到源文档列表中
+            5、对源文档列表进行去重、重排rerank、标识及评分过滤处理
+            6、遍历源文档列表，依据当前问题对源文档进行逐个匹配，匹配成功，则构造返回结果。如果在源文档列表中没有找到答案，则进行后续处理
+            未完待续564行
+        """
+        # 获取openai大模型对象：内含指定模型的编码器、openai请求客户端
         custom_llm = OpenAILLM(model, max_token, api_base, api_key, api_context_length, top_p, temperature)
         if chat_history is None:
+            # 如果对话历史参数为空，则设置其默认值为空列表
             chat_history = []
+        # 将问题赋值给retrieval_query【检索查询】
         retrieval_query = query
+        # 同时将问题赋值给condense_question【压缩【重构】问题】
         condense_question = query
         if chat_history:
+            # 如果对话历史非空
+            # 设置一个格式化的对话历史，初始化为空列表
             formatted_chat_history = []
+            # 遍历对话历史列表中的对话记录，以“人工问题，ai答案”的顺序格式化收集到列表formatted_chat_history
             for msg in chat_history:
+                # 将对话历史中的对话记录按照下述格式收集到格式化对话历史列表中
                 formatted_chat_history += [
+                    # 记录人类问题
                     HumanMessage(content=msg[0]),
+                    # 记录ai答案
                     AIMessage(content=msg[1]),
                 ]
             debug_logger.info(f"formatted_chat_history: {formatted_chat_history}")
-
+            # 获取重构问题链对象【用以根据历史对话记录和当前问题，生成一个可以独立理解【不需要依赖聊天记录就可以理解的，语义完整的】的新问题】
+            """
+            如果当前问题已经语义完整且独立【和历史对话记录没有关系】，则直接返回当前问题
+            如果当前问题语义不完整，则需要结合历史对话记录，对当前问题进行修正【语种和意思在构造前后一致】，得到可以独立理解的新问题并返回
+            """
             rewrite_q_chain = RewriteQuestionChain(model_name=model, openai_api_base=api_base, openai_api_key=api_key)
+            # 利用重构问题链的压缩问题提示词，结合格式化的历史对话记录列表和当前问题，构造完整的提示词列表【系统提示词、格式化的历史对话记录、当前问题】
             full_prompt = rewrite_q_chain.condense_q_prompt.format(
                 chat_history=formatted_chat_history,
                 question=query
             )
+            # 利用openAI大语言模型计算完整提示词列表所使用的token数量，当token数量超过3840时，执行下述循环
             while custom_llm.num_tokens_from_messages([full_prompt]) >= 4096 - 256:
+                # 从格式化的历史对话记录列表中去除第一个历史对话【距离当前对话在时间维度上最远，相关性可能最低，因此去除】
                 formatted_chat_history = formatted_chat_history[2:]
+                # 重新构造完整提示词
                 full_prompt = rewrite_q_chain.condense_q_prompt.format(
                     chat_history=formatted_chat_history,
                     question=query
                 )
+            # 打印历史对话记录的长度变更情况
             debug_logger.info(
                 f"Subtract formatted_chat_history: {len(chat_history) * 2} -> {len(formatted_chat_history)}")
             try:
                 t1 = time.perf_counter()
+                # 异步重构当前问题，并将新问题赋值给condense_question
                 condense_question = await rewrite_q_chain.condense_q_chain.ainvoke(
                     {
                         "chat_history": formatted_chat_history,
@@ -404,11 +444,14 @@ class LocalDocQA:
                     },
                 )
                 t2 = time.perf_counter()
+                # 记录压缩【重构】问题消耗时间
                 # 时间保留两位小数
                 time_record['condense_q_chain'] = round(t2 - t1, 2)
+                # 记录重构得到的新问题所使用的token数量
                 time_record['rewrite_completion_tokens'] = custom_llm.num_tokens_from_messages([condense_question])
                 debug_logger.info(f"condense_q_chain time: {time_record['condense_q_chain']}s")
             except Exception as e:
+                # 对于重构问题异常情况，不抛出异常，仅打印重构失败异常日志，且将当前问题【未经过重构处理的原始问题】赋值给condense_question
                 debug_logger.error(f"condense_q_chain error: {e}")
                 condense_question = query
             # 生成prompt
@@ -417,19 +460,25 @@ class LocalDocQA:
             #     question=query
             # )
             # qa_logger.info(f"condense_q_chain full_prompt: {full_prompt}, condense_question: {condense_question}")
+            # 打印经过重构【结合历史对话记录列表和当前问题，利用大模型、提示词进行重构得到独立且语义完整的新问题】的压缩【重构】问题描述
             debug_logger.info(f"condense_question: {condense_question}")
+            # 记录完整提示词和压缩【重构】问题一共使用的token数量
             time_record['rewrite_prompt_tokens'] = custom_llm.num_tokens_from_messages([full_prompt, condense_question])
             # 判断两个字符串是否相似：只保留中文，英文和数字
             if clear_string(condense_question) != clear_string(query):
+                # 如果压缩【重构】问题和当前问题不相似【说明重构起了作用，也即历史对话记录起了作用】，则将压缩【重构】问题赋值给retrieval_query
                 retrieval_query = condense_question
 
         if kb_ids:
+            # 如果知识库id列表非空，则依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档
             source_documents = await self.get_source_documents(retrieval_query, retriever, kb_ids, time_record,
                                                                hybrid_search, top_k)
         else:
+            # 如果知识库id列表为空，则设置源文档为空列表
             source_documents = []
 
         if need_web_search:
+            # 如果开启联网搜索
             t1 = time.perf_counter()
             web_search_results = self.web_page_search(query, top_k=3)
             web_splitter = RecursiveCharacterTextSplitter(
@@ -441,42 +490,55 @@ class LocalDocQA:
             web_search_results = web_splitter.split_documents(web_search_results)
             t2 = time.perf_counter()
             time_record['web_search'] = round(t2 - t1, 2)
+            # 将联网搜索结果追加到源文档列表中
             source_documents += web_search_results
-
+        # 对源文档列表进行去重
         source_documents = deduplicate_documents(source_documents)
         if rerank and len(source_documents) > 1 and num_tokens_rerank(query) <= 300:
+            # 如果进行重排，且源文档列表非空，且当前问题重排后是使用的token数量不超过300，则进行以下处理
             try:
                 t1 = time.perf_counter()
                 debug_logger.info(f"use rerank, rerank docs num: {len(source_documents)}")
+                # 对源文档列表进行重排处理？
                 source_documents = await self.rerank.arerank_documents(condense_question, source_documents)
                 t2 = time.perf_counter()
+                # 记录源文档列表重排消耗时间
                 time_record['rerank'] = round(t2 - t1, 2)
                 # 过滤掉低分的文档
                 if len(source_documents) > 1:
                     source_documents = [doc for doc in source_documents if float(doc.metadata['score']) >= 0.28]
             except Exception as e:
+                # 源文档列表进行重排以及过滤低分的源文档发生异常时，重置重排源文档消耗时间为0
                 time_record['rerank'] = 0.0
+                # 打印当前问题及知识库重排异常信息
                 debug_logger.error(f"query {query}: kb_ids: {kb_ids}, rerank error: {traceback.format_exc()}")
 
         # rerank之后删除headers，只保留文本内容，用于后续处理
         for doc in source_documents:
             doc.page_content = re.sub(r'^\[headers]\(.*?\)\n', '', doc.page_content)
-
+        # 过滤掉【文件名不以.faq结尾且评分低于0.9的】文档，保留剩余文档列表到high_score_faq_documents
         high_score_faq_documents = [doc for doc in source_documents if
                                     doc.metadata['file_name'].endswith('.faq') and float(doc.metadata['score'] >= 0.9)]
         if high_score_faq_documents:
+            # 如果high_score_faq_documents非空，则赋值给源文档列表【换言之，如果high_score_faq_documents为空，则上述过滤像没有发生一样】
             source_documents = high_score_faq_documents
         # FAQ完全匹配处理逻辑
         for doc in source_documents:
+            # 对源文档列表中的文档逐个匹配问题
             if doc.metadata['file_name'].endswith('.faq') and clear_string_is_equal(
                     doc.metadata['faq_dict']['question'], query):
+                # 如果文档名以.faq结尾且文档中的字典faq_dict中的问题与当前问题一致【说明找到问题的答案了】，则打印匹配到问题的日志，并进行以下处理
                 debug_logger.info(f"match faq question: {query}")
                 if only_need_search_results:
+                    # 如果问答仅需要返回检索结果，则借助yield进行流式迭代返回
                     yield source_documents, None
                     return
+                # 获取问题答案
                 res = doc.metadata['faq_dict']['answer']
+                # 构造新的对话历史列表
                 history = chat_history + [[query, res]]
                 if streaming:
+                    # 如果进行流式回答，则拼接答案和响应
                     res = 'data: ' + json.dumps({'answer': res}, ensure_ascii=False)
                 response = {"query": query,
                             "prompt": 'MATCH_FAQ',
@@ -484,18 +546,21 @@ class LocalDocQA:
                             "condense_question": condense_question,
                             "retrieval_documents": source_documents,
                             "source_documents": source_documents}
+                # 记录下述时间和token数量信息
                 time_record['llm_completed'] = 0.0
                 time_record['total_tokens'] = 0
                 time_record['prompt_tokens'] = 0
                 time_record['completion_tokens'] = 0
                 yield response, history
                 if streaming:
+                    # 流式回答实现
                     response['result'] = "data: [DONE]\n\n"
                     yield response, history
                 # 退出函数
                 return
-
+        # 在源文档列表中没有找到答案，则进行以下处理
         # es检索+milvus检索结果最多可能是2k
+        # 取前三个源文档组成新的源文档列表
         source_documents = source_documents[:top_k]
         # 获取今日日期
         today = time.strftime("%Y-%m-%d", time.localtime())

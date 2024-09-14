@@ -442,6 +442,9 @@ class KnowledgeBaseManager:
         self.execute_query_(query, (kb_name, kb_id, user_id), commit=True)
 
     def update_knowledge_base_latest_qa_time(self, kb_id, timestamp):
+        """
+        更新知识库的最新问答时间
+        """
         # timestamp的格式为'2021-08-01 00:00:00'
         query = "UPDATE KnowledgeBase SET latest_qa_time = %s WHERE kb_id = %s"
         self.execute_query_(query, (timestamp, kb_id), commit=True)
@@ -858,10 +861,15 @@ class KnowledgeBaseManager:
         return qa_log, recent_logs, older_logs
 
     def check_bot_is_exist(self, bot_id):
-        # 使用参数化查询
+        """
+        校验bot_id是否存在
+        """
+        # 使用参数化查询，查询条件：bot_id、逻辑未删除
         query = "SELECT bot_id FROM QanythingBot WHERE bot_id = %s AND deleted = 0"
+        # 执行查询语句
         result = self.execute_query_(query, (bot_id,), fetch=True)
         debug_logger.info("check_bot_exist {}".format(result))
+        # 存在，返回true，否则，返回false
         return result is not None and len(result) > 0
 
     def new_qanything_bot(self, bot_id, user_id, bot_name, description, head_image, prompt_setting, welcome_message,
@@ -878,13 +886,19 @@ class KnowledgeBaseManager:
         self.execute_query_(query, (user_id, bot_id), commit=True)
 
     def get_bot(self, user_id, bot_id):
+        """
+        依据bot_id获取bot信息
+        """
         if not bot_id:
+            # bot_id为空时，查询用户下的所有bot信息，返回结果列表
             query = "SELECT bot_id, bot_name, description, head_image, prompt_setting, welcome_message, model, kb_ids_str, update_time, user_id FROM QanythingBot WHERE user_id = %s AND deleted = 0"
             return self.execute_query_(query, (user_id,), fetch=True)
         elif not user_id:
+            # bot_id非空，user_id为空时，查询特定bot信息，返回结果
             query = "SELECT bot_id, bot_name, description, head_image, prompt_setting, welcome_message, model, kb_ids_str, update_time, user_id FROM QanythingBot WHERE bot_id = %s AND deleted = 0"
             return self.execute_query_(query, (bot_id,), fetch=True)
         else:
+            # bot_id非空，user_id非空，查询用户下指定bot_id的bot信息，返回结果
             query = "SELECT bot_id, bot_name, description, head_image, prompt_setting, welcome_message, model, kb_ids_str, update_time, user_id FROM QanythingBot WHERE user_id = %s AND bot_id = %s AND deleted = 0"
             return self.execute_query_(query, (user_id, bot_id), fetch=True)
 

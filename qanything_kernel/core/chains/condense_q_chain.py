@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 
 class RewriteQuestionChain:
     def __init__(self, model_name, openai_api_key, openai_api_base):
+        # temperature为0，表示确定性回答
         self.chat_model = ChatOpenAI(model_name=model_name, openai_api_key=openai_api_key, openai_api_base=openai_api_base,
                                      temperature=0, model_kwargs={"top_p": 0.01, "seed": 1234})
         self.condense_q_system_prompt = """
@@ -34,6 +35,7 @@ Example output: `那北京哪里适合野炊呢？` # 直接返回新问题，�
 ```
 
 """
+        # 构造压缩问题提示词：上述系统提示词、格式化的历史对话记录列表、当前问题
         self.condense_q_prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", self.condense_q_system_prompt),
@@ -41,6 +43,6 @@ Example output: `那北京哪里适合野炊呢？` # 直接返回新问题，�
                 ("human", "新问题:{question}\n请构造不需要聊天历史就能理解的独立且语义完整的问题。\n独立问题:"),
             ]
         )
-
+        # 构造压缩问题链，依赖压缩问题提示词、chatOpenAI模型
         self.condense_q_chain = self.condense_q_prompt | self.chat_model | StrOutputParser()
 

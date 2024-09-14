@@ -31,7 +31,7 @@ __all__ = ["new_knowledge_base", "upload_files", "list_kbs", "list_docs", "delet
 
 INVALID_USER_ID = f"fail, Invalid user_id: . user_id 必须只含有字母，数字和下划线且字母开头"
 
-# 获取环境变量GATEWAY_IP
+# 获取环境变量GATEWAY_IP【host.docker.internal，在docker-compose-win.yaml中qanything容器里面的环境变量处有配置】
 GATEWAY_IP = os.getenv("GATEWAY_IP", "localhost")
 debug_logger.info(f"GATEWAY_IP: {GATEWAY_IP}")
 
@@ -659,86 +659,139 @@ async def clean_files_by_status(req: request):
 async def local_doc_chat(req: request):
     """
     问答接口
+    流程：
+        1、校验用户合法性
+        2、校验机器人合法性
+        3、获取知识库id和提示词等各种参数
+        4、校验知识库合法性
+        5、根据知识库id构建问答知识库id，并过滤掉不存在的问答知识库id，将剩余的问答知识库id列表统一收集到知识库id列表中
+        6、获取知识库id列表对应的有效文件列表，如果有效文件列表为空，则将知识库id列表置为空，否则更新相应知识库的最新问答时间
+        7、判断流式标志，进行答案检索
+        未完待续至862行
     """
     # time.perf_counter()返回性能计数器的值（以小数秒为单位）作为浮点数，即具有最高可用分辨率的时钟，以测量短持续时间。 它确实包括睡眠期间经过的时间，并且是系统范围的。
     preprocess_start = time.perf_counter()
     local_doc_qa: LocalDocQA = req.app.ctx.local_doc_qa
+    # 获取入参中的用户信息
     user_id = safe_get(req, 'user_id')
     user_info = safe_get(req, 'user_info', "1234")
+    # 校验用户合法性
     passed, msg = check_user_id_and_user_info(user_id, user_info)
     if not passed:
         return sanic_json({"code": 2001, "msg": msg})
     # local_cluster = get_milvus_cluster_by_user_info(user_info)
+    # 拼接用户id
     user_id = user_id + '__' + user_info
     # local_doc_qa.milvus_summary.update_user_cluster(user_id, [get_milvus_cluster_by_user_info(user_info)])
     debug_logger.info('local_doc_chat %s', user_id)
     debug_logger.info('user_info %s', user_info)
+    # 获取bot_id【机器人id？】
     bot_id = safe_get(req, 'bot_id')
     if bot_id:
+        # bot_id非空，从bot信息中获取知识库id列表和提示词
+        # 校验bot_id是否存在
         if not local_doc_qa.milvus_summary.check_bot_is_exist(bot_id):
+            # bot_id非空且对应bot不存在时，返回提示信息【对应bot不存在】
             return sanic_json({"code": 2003, "msg": "fail, Bot {} not found".format(bot_id)})
+        # 依据bot_id获取bot信息
         bot_info = local_doc_qa.milvus_summary.get_bot(None, bot_id)[0]
+        # 提取bot信息中的各个字段
         bot_id, bot_name, desc, image, prompt, welcome, model, kb_ids_str, upload_time, user_id = bot_info
+        # 获取bot信息中的知识库id列表
         kb_ids = kb_ids_str.split(',')
         if not kb_ids:
+            # 如果bot信息中的知识库id列表为空，则返回提示信息【对应bot未绑定知识库】
             return sanic_json({"code": 2003, "msg": "fail, Bot {} unbound knowledge base.".format(bot_id)})
+        # 使用bot信息中的提示词
         custom_prompt = prompt
     else:
+        # bot_id为空，则从入参中获取知识库id和提示词
         kb_ids = safe_get(req, 'kb_ids')
         custom_prompt = safe_get(req, 'custom_prompt', None)
     if len(kb_ids) > 20:
+        # 如果知识库id的个数大于20个，则返回提示信息【知识库id应不超过20个】
         return sanic_json({"code": 2005, "msg": "fail, kb_ids length should less than or equal to 20"})
+    # 处理知识库id【主要针对入参中的知识库id？】
     kb_ids = [correct_kb_id(kb_id) for kb_id in kb_ids]
+    # 获取入参中的问题
     question = safe_get(req, 'question')
+    # 获取入参中的重排标识参数，默认为True
     rerank = safe_get(req, 'rerank', default=True)
     debug_logger.info('rerank %s', rerank)
+    # 获取入参中的流式输出标识，默认为False【流式：不用等结果完全出来，边解答边返回。非流式：等待结果完全出来，然后返回】
     streaming = safe_get(req, 'streaming', False)
+    # 获取入参中的历史对话列表，默认为空列表
     history = safe_get(req, 'history', [])
+    # 获取入参中的仅需检索内容【跳过大模型回答】标识，默认为False
     only_need_search_results = safe_get(req, 'only_need_search_results', False)
+    # 获取入参中的联网搜索标识，默认为False
     need_web_search = safe_get(req, 'networking', False)
-
+    # 获取入参中的api_base参数，默认为空字符串
     api_base = safe_get(req, 'api_base', '')
     # 如果api_base中包含0.0.0.0或127.0.0.1或localhost，替换为GATEWAY_IP
     api_base = api_base.replace('0.0.0.0', GATEWAY_IP).replace('127.0.0.1', GATEWAY_IP).replace('localhost', GATEWAY_IP)
-
+    # 获取入参中的api_key，默认为ollama
     api_key = safe_get(req, 'api_key', 'ollama')
+    # 获取入参中的api上下文长度，默认4096
     api_context_length = safe_get(req, 'api_context_length', 4096)
+    # 获取入参中的推理超参数：top_p，默认0.99；temperature，默认0.5，top_k，默认30
+    """
+    推理超参数：
+    temperature：不小于0的浮点数，取值越高，输出效果越随机，一般介于[0,1]之间。确定性答案，对应值为0
+    top_k：大于0的正整数，从k个概率最大的结果中进行采样，值越大，多样性越强，一般设置为20-100之间
+    top_p：大于0的浮点数，使所有被考虑的结果的概率之和大于p值，p值越大多样性越强，一般设置为0.7-0.95【top_p比top_k更有效，应优先调节top_p】
+    """
     top_p = safe_get(req, 'top_p', 0.99)
     temperature = safe_get(req, 'temperature', 0.5)
     top_k = safe_get(req, 'top_k', VECTOR_SEARCH_TOP_K)
 
     if top_k > 100:
+        # 如果入参中的top_k大于100，则返回提示信息【top_k应不超过100】
         return sanic_json({"code": 2003, "msg": "fail, top_k should less than or equal to 100"})
-
+    # 收集缺失参数列表
     missing_params = []
     if not api_base:
+        # 如果入参中的api_base为空字符串或者没传api_base参数，则收集
         missing_params.append('api_base')
     if not api_key:
+        # 如果入参中的api_key为空字符串，则收集
         missing_params.append('api_key')
     if not api_context_length:
+        # 如果入参中的api_context_length为空，则收集
         missing_params.append('api_context_length')
     if not top_p:
+        # 如果入参中的top_p为空，则收集
         missing_params.append('top_p')
     if not top_k:
+        # 如果入参中的top_k为空，则收集
         missing_params.append('top_k')
     if top_p == 1.0:
+        # 如果入参中的top_p为1，则调整为0.99
         top_p = 0.99
     if not temperature:
+        # 如果入参中的temperature为空，则收集
         missing_params.append('temperature')
 
     if missing_params:
+        # 如果缺失参数列表非空，则返回提示信息【告知缺失哪些参数】
         missing_params_str = " and ".join(missing_params) if len(missing_params) > 1 else missing_params[0]
         return sanic_json({"code": 2003, "msg": f"fail, {missing_params_str} is required"})
 
     if only_need_search_results and streaming:
+        # 如果仅需检索结果【不需要经大模型回答】且进行流式输出响应，则返回提示信息【二者不能同时设置为True】
         return sanic_json(
             {"code": 2006, "msg": "fail, only_need_search_results and streaming can't be True at the same time"})
+    # 获取模型参数，默认为gpt-3.5-turbo-0613
     model = safe_get(req, 'model', 'gpt-3.5-turbo-0613')
+    # 获取入参中LLM输出的最大token数，一般最大设置为上下文长度的1/4，比如4K上下文设置范围应该是[0-1024]
     max_token = safe_get(req, 'max_token')
+    # 获取入参中的请求来源标识，默认unknown。可用于区分请求来源，目前共有paas，saas_bot，saas_qa，分别代表api调用，前端bot问答，前端知识库问答
     request_source = safe_get(req, 'source', 'unknown')
+    # 获取入参中的混合检索标识，默认False【不开启混合检索】
     hybrid_search = safe_get(req, 'hybrid_search', False)
+    # 获取入参中的web内容分块大小，默认值800，该参数在开启联网检索【networking参数为True】后生效，web搜索到的内容文本分块大小
     web_chunk_size = safe_get(req, 'web_chunk_size', DEFAULT_PARENT_CHUNK_SIZE)
-
+    # 打印上述入参
     debug_logger.info("history: %s ", history)
     debug_logger.info("question: %s", question)
     debug_logger.info("kb_ids: %s", kb_ids)
@@ -758,36 +811,53 @@ async def local_doc_chat(req: request):
     debug_logger.info("temperature: %s", temperature)
     debug_logger.info("hybrid_search: %s", hybrid_search)
     debug_logger.info("web_chunk_size: %s", web_chunk_size)
-
+    # 处理时间字典，用以记录各个阶段的处理时间
     time_record = {}
     if kb_ids:
+        # 知识库id列表非空时，校验知识库id是否存在，并返回不存在的知识库id列表
         not_exist_kb_ids = local_doc_qa.milvus_summary.check_kb_exist(user_id, kb_ids)
         if not_exist_kb_ids:
+            # 如果有不存在的知识库id，则返回提示信息【列出不存在的知识库id】
             return sanic_json({"code": 2003, "msg": "fail, knowledge Base {} not found".format(not_exist_kb_ids)})
+        # 拼接知识库id，组成问答知识库id列表
         faq_kb_ids = [kb + '_FAQ' for kb in kb_ids]
+        # 校验问答知识库id是否存在，并返回不存在的问答知识库id列表
         not_exist_faq_kb_ids = local_doc_qa.milvus_summary.check_kb_exist(user_id, faq_kb_ids)
+        # 过滤出存在的问答知识库id列表
         exist_faq_kb_ids = [kb for kb in faq_kb_ids if kb not in not_exist_faq_kb_ids]
         debug_logger.info("exist_faq_kb_ids: %s", exist_faq_kb_ids)
+        # 将存在的问答知识库id列表和知识库id列表拼接起来，赋值给kb_ids
+        # 列表间的拼接功能a+=b,相当于a=a+b,比如a=[1,2,3],b=[4,5,6]，那么执行后a=[1,2,3,4,5,6]
         kb_ids += exist_faq_kb_ids
 
     file_infos = []
+    # 遍历知识库列表收集对应的文件信息
     for kb_id in kb_ids:
+        # 将知识库对应的文件信息收集到列表中
         file_infos.extend(local_doc_qa.milvus_summary.get_files(user_id, kb_id))
+    # 从知识库文件列表中收集有效文件列表，有效的定义：status字段为green
     valid_files = [fi for fi in file_infos if fi[2] == 'green']
     if len(valid_files) == 0:
+        # 如果有效文件列表为空，则清空知识库id列表，采用chat模式？
         debug_logger.info("valid_files is empty, use only chat mode.")
         kb_ids = []
+    # 记录预处理消耗时间
     preprocess_end = time.perf_counter()
     time_record['preprocess'] = round(preprocess_end - preprocess_start, 2)
     # 获取格式为'2021-08-01 00:00:00'的时间戳
     qa_timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
     for kb_id in kb_ids:
+        # 更新相应知识库的最新问答时间
         local_doc_qa.milvus_summary.update_knowledge_base_latest_qa_time(kb_id, qa_timestamp)
     debug_logger.info("streaming: %s", streaming)
     if streaming:
+        # 采取流式回答，边回答边返回
         debug_logger.info("start generate answer")
 
         async def generate_answer(response):
+            """
+            异步生成答案
+            """
             debug_logger.info("start generate...")
             async for resp, next_history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                                     max_token=max_token,
@@ -870,6 +940,7 @@ async def local_doc_chat(req: request):
         return response_stream
 
     else:
+        # 非流式回答，得到完整答案，然后返回
         async for resp, history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                            max_token=max_token,
                                                                            kb_ids=kb_ids,

@@ -131,6 +131,7 @@ services:
       - NCCL_LAUNCH_MODE=PARALLEL
       - GPUID=${GPUID:-0}
       - USER_IP=${USER_IP:-0.0.0.0}
+#      在问答接口中，api_base参数处有用到
       - GATEWAY_IP=host.docker.internal
 #    qanything依赖standalone【服务健康】、MySQL【服务已启动】、es【服务健康】
     depends_on:
