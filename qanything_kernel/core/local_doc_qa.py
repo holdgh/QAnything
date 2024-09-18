@@ -148,15 +148,23 @@ class LocalDocQA:
                                    source_docs: List[Document],
                                    history: List[str],
                                    prompt_template: str) -> Tuple[List[Document], int]:
+        """
+        处理源文档列表，依据大模型所支持的上下文token数量，减去当前问题、对话历史、提示词、源文档索引消息等的token数量，得出限制的token数量【允许源文档header和内容的token数量最大值】
+        在不超过限制的token数量的前提下，将源文档列表中文档加入到新源文档列表中，得出新的源文档列表
+        """
         # 组装prompt,根据max_token
+        # 获取当前问题的token数量的4倍
         query_token_num = custom_llm.num_tokens_from_messages([query]) * 4
+        # 遍历对话历史列表，获取对话历史的token数量
         history_token_num = custom_llm.num_tokens_from_messages([x for sublist in history for x in sublist])
+        # 获取提示词的token数量
         template_token_num = custom_llm.num_tokens_from_messages([prompt_template])
-
+        # 依据源文档列表长度，遍历其索引0、1、2、……、len-1，构造消息，获取这些消息的token数量
         reference_field_token_num = custom_llm.num_tokens_from_messages(
             [f"<reference>[{idx + 1}]</reference>" for idx in range(len(source_docs))])
+        # 依据大模型的token数量属性，获取【api上下文长度-最大token数量-50-当前问题token数量的4倍-对话历史token数量-提示词token数量-文档索引消息的token数量】限制的token数量
         limited_token_nums = custom_llm.token_window - custom_llm.max_token - custom_llm.offcut_token - query_token_num - history_token_num - template_token_num - reference_field_token_num
-
+        # 日志打印上述token数量数据
         debug_logger.info(f"=============================================")
         debug_logger.info(f"token_window = {custom_llm.token_window}")
         debug_logger.info(f"max_token = {custom_llm.max_token}")
@@ -174,26 +182,38 @@ class LocalDocQA:
         # 已知箱子容量，装满这个箱子
         new_source_docs = []
         total_token_num = 0
-
+        # 去重后的文件索引列表
         not_repeated_file_ids = []
+        # 遍历源文档列表
         for doc in source_docs:
             headers_token_num = 0
+            # 获取文档的文件索引
             file_id = doc.metadata['file_id']
+            # 依据文件索引是否在not_repeated_file_ids中对文档列表中的文件进行去重
             if file_id not in not_repeated_file_ids:
+                # 如果文件索引不在not_repeated_file_ids，则将其追加
                 not_repeated_file_ids.append(file_id)
                 if 'headers' in doc.metadata:
+                    # 对于文档元数据中有headers字段时，取出headers数据，构造headers变量
                     headers = f"headers={doc.metadata['headers']}"
+                    # 获取headers的token数量
                     headers_token_num = custom_llm.num_tokens_from_messages([headers])
+            # 对文档内容进行正则匹配过滤，将图片用空字符串替换掉，得到文档有效内容
             doc_valid_content = re.sub(r'!\[figure]\(.*?\)', '', doc.page_content)
+            # 获取文档有效内容的token数量
             doc_token_num = custom_llm.num_tokens_from_messages([doc_valid_content])
+            # 将headers的token数量累加到文档的token数量上
             doc_token_num += headers_token_num
             if total_token_num + doc_token_num <= limited_token_nums:
+                # 如果当前文档的token数量和总token数量的和不超过限制的token数量，则将文档追加到新的源文档列表中，并更新【将当前文档的token数量累加到总token数量上】总token数量
                 new_source_docs.append(doc)
                 total_token_num += doc_token_num
             else:
+                # 如果已超过限制的token数量，则跳出循环
                 break
-
+        # 打印新的源文档列表的token数量
         debug_logger.info(f"new_source_docs token nums: {custom_llm.num_tokens_from_docs(new_source_docs)}")
+        # 返回新的源文档列表和限制的token数量
         return new_source_docs, limited_token_nums
 
     def generate_prompt(self, query, source_docs, prompt_template):
@@ -274,14 +294,17 @@ class LocalDocQA:
         # 删除文档中的图片
         # for doc in source_documents:
         #     doc.page_content = re.sub(r'!\[figure]\(.*?\)', '', doc.page_content)
-
+        # 依据openAI大模型、当前问题、源文档列表、对话历史、提示词，处理源文档列表，得到新的源文档列表和限制的token数量【大模型所支持的上下文剩余token数量】
         retrieval_documents, limited_token_nums = self.reprocess_source_documents(custom_llm=custom_llm, query=query,
                                                                                   source_docs=source_documents,
                                                                                   history=chat_history,
                                                                                   prompt_template=prompt_template)
         debug_logger.info(f"retrieval_documents len: {len(retrieval_documents)}")
         if not need_web_search:
+            # 如果没有开启联网搜索
             try:
+                # 依据文件id，进行文档聚合【排序，压缩创建新文档，满足限制token数据要求】
+                # 为什么源文档列表至多有两个文件id时才会聚合，否则此结果得到的是空列表
                 new_docs = self.aggregate_documents(retrieval_documents, limited_token_nums, custom_llm)
                 if new_docs:
                     source_documents = new_docs
@@ -560,7 +583,7 @@ class LocalDocQA:
                 return
         # 在源文档列表中没有找到答案，则进行以下处理
         # es检索+milvus检索结果最多可能是2k
-        # 取前三个源文档组成新的源文档列表
+        # 取前30个源文档组成新的源文档列表
         source_documents = source_documents[:top_k]
         # 获取今日日期
         today = time.strftime("%Y-%m-%d", time.localtime())
@@ -569,23 +592,30 @@ class LocalDocQA:
 
         t1 = time.perf_counter()
         if source_documents:
+            # 如果源文档列表非空，则进行下述处理
             if custom_prompt:
+                # 如果入参中的提示词非空，则依据custom_prompt替换模板中的相应占位符生成提示词prompt_template
                 # escaped_custom_prompt = custom_prompt.replace('{', '{{').replace('}', '}}')
                 # prompt_template = CUSTOM_PROMPT_TEMPLATE.format(custom_prompt=escaped_custom_prompt)
                 prompt_template = CUSTOM_PROMPT_TEMPLATE.replace("{{custom_prompt}}", custom_prompt)
             else:
+                # 如果入参中的提示词为空，则依据当前日期和当前时间替换系统提示词模板中的相应占位符生成提示词
                 # system_prompt = SYSTEM.format(today_date=today, current_time=now)
                 system_prompt = SYSTEM.replace("{{today_date}}", today).replace("{{current_time}}", now)
                 # prompt_template = PROMPT_TEMPLATE.format(system=system_prompt, instructions=INSTRUCTIONS)
+                # 将系统提示词内容和说明字符替换到提示词模板中生成提示词prompt_template
                 prompt_template = PROMPT_TEMPLATE.replace("{{system}}", system_prompt).replace("{{instructions}}",
                                                                                                INSTRUCTIONS)
         else:
+            # 如果源文档列表为空，则进行下述处理
             if custom_prompt:
+                # 如果入参中的提示词非空，则依据custom_prompt及当前日期时间替换模板中的相应占位符生成提示词prompt_template
                 # escaped_custom_prompt = custom_prompt.replace('{', '{{').replace('}', '}}')
                 # prompt_template = SIMPLE_PROMPT_TEMPLATE.format(today=today, now=now, custom_prompt=escaped_custom_prompt)
                 prompt_template = SIMPLE_PROMPT_TEMPLATE.replace("{{today}}", today).replace("{{now}}", now).replace(
                     "{{custom_prompt}}", custom_prompt)
             else:
+                # 如果入参中的提示词为空，则声明一个simple_custom_prompt，依据simple_custom_prompt、当前日期和当前时间替换系统提示词模板中的相应占位符生成提示词prompt_template
                 simple_custom_prompt = """
                 - If you cannot answer based on the given information, you will return the sentence \"抱歉，已知的信息不足，因此无法回答。\". 
                 """
@@ -600,6 +630,7 @@ class LocalDocQA:
         #         total_images_number += len(doc.metadata['images'])
         #     doc.page_content = replace_image_references(doc.page_content, doc.metadata['file_id'])
         # debug_logger.info(f"total_images_number: {total_images_number}")
+        # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到检索文档列表
         source_documents, retrieval_documents = await self.prepare_source_documents(query, custom_llm, source_documents,
                                                                                     chat_history,
                                                                                     prompt_template,
@@ -686,37 +717,58 @@ class LocalDocQA:
             yield response, history
 
     def get_completed_document(self, file_id, limit=None):
+        """
+        依据文件id获取经排序【按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
+        """
         sorted_json_datas = self.milvus_summary.get_document_by_file_id(file_id)
         if limit:
+            # 如果有文档限制索引，则对sorted_json_datas进行相应索引提取
             sorted_json_datas = sorted_json_datas[limit[0]: limit[1] + 1]
 
         completed_content_with_figure = ''
         completed_content = ''
         for doc_json in sorted_json_datas:
+            # 利用json_data构造文档对象
             doc = Document(page_content=doc_json['kwargs']['page_content'], metadata=doc_json['kwargs']['metadata'])
             # rerank之后删除headers，只保留文本内容，用于后续处理
+            # 利用正则过滤headers内容
             doc.page_content = re.sub(r'^\[headers]\(.*?\)\n', '', doc.page_content)
             # if filter_figures:
             #     doc.page_content = re.sub(r'!\[figure]\(.*?\)', '', doc.page_content)  # 删除图片
             if doc_json['kwargs']['metadata']['file_name'].endswith('.faq'):
+                # json_data中的文件名以.faq结尾时
+                # 获取faq_dict数据
                 faq_dict = doc_json['kwargs']['metadata']['faq_dict']
+                # 以问答形式构造文档内容
                 doc.page_content = f"{faq_dict['question']}：{faq_dict['answer']}"
+            # 追加文档内容【结果包含图片】
             completed_content_with_figure += doc.page_content + '\n\n'
+            # 删除文档内容中的图片
             completed_content += re.sub(r'!\[figure]\(.*?\)', '', doc.page_content) + '\n\n' # 删除图片
+        # 构造含有图片的文件对象
         completed_doc_with_figure = Document(page_content=completed_content_with_figure, metadata=sorted_json_datas[0]['kwargs']['metadata'])
+        # 构造不含图片的文件对象
         completed_doc = Document(page_content=completed_content, metadata=sorted_json_datas[0]['kwargs']['metadata'])
         # FIX metadata
         has_table = False
         images = []
+        # 遍历处理json_data
         for doc_json in sorted_json_datas:
             if doc_json['kwargs']['metadata'].get('has_table'):
+                # 当json_data中出现表格标识时，跳出循环
                 has_table = True
                 break
             if doc_json['kwargs']['metadata'].get('images'):
+                # 当json_data中含有图片列表时，将图片列表追加到images中
                 images.extend(doc_json['kwargs']['metadata']['images'])
+        # 对于不含图片的文档对象/含有图片的文档对象，针对其元数据，进行以下处理
+        # 设置表格标识
         completed_doc.metadata['has_table'] = has_table
+        # 设置图片列表
         completed_doc.metadata['images'] = images
+        # 设置表格标识
         completed_doc_with_figure.metadata['has_table'] = has_table
+        # 设置图片列表
         completed_doc_with_figure.metadata['images'] = images
 
         # completed_content = ''
@@ -731,87 +783,142 @@ class LocalDocQA:
         return completed_doc, completed_doc_with_figure
 
     def aggregate_documents(self, source_documents, limited_token_nums, custom_llm):
+        """
+        对于源文档列表进行聚合处理，得到新的源文档列表
+        收集source_documents中的2个文件id的信息：文件id，文档id列表，文档列表
+        1、如果source_documents有超过2个文件id，则返回空列表
+        2、对第一个文件id，做处理：依据文件id获取文档信息【文档id，json_data】列表，按照文档id从小到大排序，收集所有json_data，生成完整文档【带图片/不带图片】
+        3、计算第一个文件id的不带图片完整文档的token数量与第二个文件列表的token数量之和，不超过限制的token数量limited_token_nums时，将第一个文件id的带图片的完整文档收集到结果中；超过限制的token数量时【如果第一个文件id对应的文档列表只有一个文档，则直接返回空列表】，依据第一个文件id对应的文档id列表，取出文档id的上下界，对该文档id上下界范围内的文档生成完整文档，做同样逻辑判断【token数量之和不超过limited_token_nums，则将此时的带图片完整文档收集到结果中；token数量之和超过limited_token_nums时，返回空列表】
+        4、对第二个文件id做类似第2、3步的逻辑，有些不同。计算第二个文件id的不带图片完整文档的token数量与第一个文件id的完整文档的token数量之和，不超过限制的token数量limited_token_nums时，将第二个文件id的带图片的完整文档收集到结果中；超过限制的token数量时【如果第二个文件id对应的文档列表只有一个文档，则将其追加到结果中，并返回结果】，依据第二个文件id对应的文档id列表，取出文档id的上下界，对该文档id上下界范围内的文档生成完整文档，做同样逻辑判断【token数量之和不超过limited_token_nums，则将此时的带图片完整文档收集到结果中；token数量之和超过limited_token_nums时，则将第二个文件id对应的文档列表追加到结果中，并返回结果】
+        返回结果【一个或两个文件id对应的完整文档列表】
+        """
         # 聚合文档，具体逻辑是帮我判断所有候选是否集中在一个或两个文件中，是的话直接返回这一个或两个完整文档，如果tokens不够则截取文档中的完整上下文
+        # 用同样的逻辑，收集两个文档
         first_file_dict = {}
         ori_first_docs = []
         second_file_dict = {}
         ori_second_docs = []
+        # 遍历新的源文档列表
         for doc in source_documents:
+            # 获取文档元数据中的文件id
             file_id = doc.metadata['file_id']
             if not first_file_dict:
+                # first_file_dict为空时
+                # 将当前文档的文件索引映射到first_file_dict中
                 first_file_dict['file_id'] = file_id
+                # 将当前文档的文档索引【doc_id以_分隔的最后一段】映射到first_file_dict中
                 first_file_dict['doc_ids'] = [int(doc.metadata['doc_id'].split('_')[-1])]
+                # 将当前文档追加到ori_first_docs列表中
                 ori_first_docs.append(doc)
+                # 遍历源文档列表，找到文档元数据中的文件id和当前文档元数据中的文件id一样的文档元数据得分字段，组成一个列表，取该得分列表的最大值，映射到first_file_dict中
                 first_file_dict['score'] = max(
                     [doc.metadata['score'] for doc in source_documents if doc.metadata['file_id'] == file_id])
             elif first_file_dict['file_id'] == file_id:
+                # 当前文档元数据中的文件id在first_file_dict中时
+                # 将当前文档元数据中的文档索引追加到first_file_dict
                 first_file_dict['doc_ids'].append(int(doc.metadata['doc_id'].split('_')[-1]))
+                # 将当前文档追加到ori_first_docs列表中
                 ori_first_docs.append(doc)
             elif not second_file_dict:
+                # second_file_dict为空时
+                # 将当前文档元数据中的文件id映射到second_file_dict中
                 second_file_dict['file_id'] = file_id
+                # 将当前文档的文档索引【doc_id以_分隔的最后一段】映射到second_file_dict中
                 second_file_dict['doc_ids'] = [int(doc.metadata['doc_id'].split('_')[-1])]
+                # 将当前文档追加到ori_second_docs中
                 ori_second_docs.append(doc)
+                # 遍历源文档列表，找到文档元数据中的文件id和当前文档元数据中的文件id一样的文档元数据得分字段，组成一个列表，取该得分列表的最大值，映射到second_file_dict中
                 second_file_dict['score'] = max(
                     [doc.metadata['score'] for doc in source_documents if doc.metadata['file_id'] == file_id])
             elif second_file_dict['file_id'] == file_id:
+                # 当前文档元数据中的文件id在second_file_dict中时
+                # 将当前文档元数据中的文档索引追加到second_file_dict
                 second_file_dict['doc_ids'].append(int(doc.metadata['doc_id'].split('_')[-1]))
+                # 将当前文档追加到ori_second_docs列表中
                 ori_second_docs.append(doc)
             else:  # 如果有第三个文件，直接返回
                 return []
-
+        # 获取第一个/第二个文档列表中文档内容的token数量
         ori_first_docs_tokens = custom_llm.num_tokens_from_docs(ori_first_docs)
         ori_second_docs_tokens = custom_llm.num_tokens_from_docs(ori_second_docs)
 
         new_docs = []
+        # 依据第一个文件id获取经排序【按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
         first_completed_doc, first_completed_doc_with_figure = self.get_completed_document(first_file_dict['file_id'])
+        # 对不含图片的完整文档设置得分
         first_completed_doc.metadata['score'] = first_file_dict['score']
+        # 获取不含图片的完整文档的token数量
         first_doc_tokens = custom_llm.num_tokens_from_docs([first_completed_doc])
         if first_doc_tokens + ori_second_docs_tokens > limited_token_nums:
+            # 如果第一个文件id的不含图片的完整文档的token数量与第二个文档列表的token数量之和超过限制token数量
             if len(ori_first_docs) == 1:
+                # 如果第一个文档列表只有一个文档，则直接返回new_docs【空列表】
                 debug_logger.info(f"first_file_docs number is one")
                 return new_docs
             # 获取first_file_dict['doc_ids']的最小值和最大值
             doc_limit = [min(first_file_dict['doc_ids']), max(first_file_dict['doc_ids'])]
+            # 依据第一个文件id获取经排序【先根据文档索引限制参数doc_limit对文件id查询文档列表结果进行切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
             first_completed_doc_limit, first_completed_doc_limit_with_figure = self.get_completed_document(
                 first_file_dict['file_id'], doc_limit)
+            # 对不含图片的完整文档设置得分
             first_completed_doc_limit.metadata['score'] = first_file_dict['score']
+            # 获取不含图片的完整文档的token数量
             first_doc_tokens = custom_llm.num_tokens_from_docs([first_completed_doc_limit])
             if first_doc_tokens + ori_second_docs_tokens > limited_token_nums:
+                # 如果第一个文件id的不含图片的完整文档【过滤了文档id，只取doc_limit范围内的文档列表】的token数量与第二个文档列表的token数量之和超过限制token数量
                 debug_logger.info(
                     f"first_limit_doc_tokens {doc_limit}: {first_doc_tokens} + ori_second_docs_tokens: {ori_second_docs_tokens} > limited_token_nums: {limited_token_nums}")
+                # 直接返回new_docs【空列表】
                 return new_docs
             else:
+                # 如果第一个文件id的不含图片的完整文档【过滤了文档id，只取doc_limit范围内的文档列表】的token数量与第二个文档列表的token数量之和不超过限制token数量
                 debug_logger.info(
                     f"first_limit_doc_tokens {doc_limit}: {first_doc_tokens} + ori_second_docs_tokens: {ori_second_docs_tokens} <= limited_token_nums: {limited_token_nums}")
+                # 将第一个文件id的含图片的完整文档【过滤了文档id，只取doc_limit范围内的文档列表】追加到new_docs中
                 new_docs.append(first_completed_doc_limit_with_figure)
         else:
+            # 如果第一个文件id的不含图片的完整文档的token数量与第二个文档列表的token数量之和不超过限制token数量
             debug_logger.info(
                 f"first_doc_tokens: {first_doc_tokens} + ori_second_docs_tokens: {ori_second_docs_tokens} <= limited_token_nums: {limited_token_nums}")
+            # 将第一个文件id的含图片的完整文档追加到new_docs中
             new_docs.append(first_completed_doc_with_figure)
         if second_file_dict:
+            # 第二个文件字典非空时
+            # 依据第二个文件id获取经排序【按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
             second_completed_doc, second_completed_doc_with_figure = self.get_completed_document(second_file_dict['file_id'])
+            # 设置得分
             second_completed_doc.metadata['score'] = second_file_dict['score']
+            # 获取第二个文件id对应的不含图片的完整文档的token数量
             second_doc_tokens = custom_llm.num_tokens_from_docs([second_completed_doc])
             if first_doc_tokens + second_doc_tokens > limited_token_nums:
+                # 第一个文件id对应的完整文档的token数量与第二个文档列表的token数量之和超过限制的token数量
                 if len(ori_second_docs) == 1:
+                    # 第二个文档列表仅有一个文档时，【前期已经判断过：第二个文档列表的token数量与第一个文件id对应的完整文档的token数量之和不超过限制的token数量】将其追加到new_docs中，并返回new_docs
                     debug_logger.info(f"second_file_docs number is one")
                     new_docs.extend(ori_second_docs)
                     return new_docs
+                # 获取second_file_dict['doc_ids']的最小值和最大值，用以获取完整文档时过滤文件id对应的文档列表，其实是减少完整文档的token数量
                 doc_limit = [min(second_file_dict['doc_ids']), max(second_file_dict['doc_ids'])]
+                # 依据第二个文件id获取经排序【先根据文档索引限制参数doc_limit对文件id查询文档列表结果进行切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
                 second_completed_doc_limit, second_completed_doc_limit_with_figure = self.get_completed_document(
                     second_file_dict['file_id'], doc_limit)
+                # 设置得分
                 second_completed_doc_limit.metadata['score'] = second_file_dict['score']
+                # 获取不含图片的完整文档的token数量
                 second_doc_tokens = custom_llm.num_tokens_from_docs([second_completed_doc_limit])
                 if first_doc_tokens + second_doc_tokens > limited_token_nums:
+                    # 如果第二个文件id的不含图片的完整文档【过滤了文档id，只取doc_limit范围内的文档列表】的token数量与第二个文档列表的token数量之和超过限制token数量，【前期已经判断过：第二个文档列表的token数量与第一个文件id对应的完整文档的token数量之和不超过限制的token数量】则将第二个文档列表追加到new_docs中，并返回
                     debug_logger.info(
                         f"first_doc_tokens: {first_doc_tokens} + second_limit_doc_tokens {doc_limit}: {second_doc_tokens} > limited_token_nums: {limited_token_nums}")
                     new_docs.extend(ori_second_docs)
                     return new_docs
                 else:
+                    # 如果第二个文件id的不含图片的完整文档【过滤了文档id，只取doc_limit范围内的文档列表】的token数量与第二个文档列表的token数量之和不超过限制token数量，则将第二个文件id对应的带有图片的完整文档追加到new_docs中
                     debug_logger.info(
                         f"first_doc_tokens: {first_doc_tokens} + second_limit_doc_tokens {doc_limit}: {second_doc_tokens} <= limited_token_nums: {limited_token_nums}")
                     new_docs.append(second_completed_doc_limit_with_figure)
             else:
+                # 如果第二个文件id的不含图片的完整文档的token数量与第二个文档列表的token数量之和不超过限制token数量，则将第二个文件id对应的带有图片的完整文档追加到new_docs中
                 debug_logger.info(
                     f"first_doc_tokens: {first_doc_tokens} + second_doc_tokens: {second_doc_tokens} <= limited_token_nums: {limited_token_nums}")
                 new_docs.append(second_completed_doc_with_figure)

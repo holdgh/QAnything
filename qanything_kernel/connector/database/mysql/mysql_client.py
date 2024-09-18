@@ -609,6 +609,10 @@ class KnowledgeBaseManager:
         self.execute_query_(query, (faq_id, user_id, kb_id, question, answer, nos_keys), commit=True)
 
     def get_document_by_file_id(self, file_id, batch_size=100) -> Optional[List]:
+        """
+        依据文件id获取文档列表【文档中的json_data字段列表，有排序处理】
+        分页查询，逐页追加查询结果到方法结果列表中
+        """
         # 初始化结果列表
         all_json_datas = []
 
@@ -623,20 +627,24 @@ class KnowledgeBaseManager:
 
             if not doc_all:
                 break  # 如果没有更多数据，跳出循环
-
+            # 收集当前页查询结果的文档id
+            # doc[0]对应查询语句中的doc_id字段
             doc_ids = [doc[0].split('_')[1] for doc in doc_all]
+            # doc[1]对应查询语句中的json_data字段，并利用json.loads方法将json字符串转化为字典对象，遍历当前页查询结果，将其处理结果收集到字典列表json_datas中
             json_datas = [json.loads(doc[1]) for doc in doc_all]
+            # 将文档id和json数据两两一一对应【打包】，遍历处理
             for doc_id, json_data in zip(doc_ids, json_datas):
+                # 为json数据kwargs项追加键值对chunk_id：文件id_文档id
                 json_data['kwargs']['chunk_id'] = file_id + '_' + str(doc_id)
 
-            # 将doc_id和json_data打包并追加到结果列表
+            # 将当前页查询结果的doc_id和json_data打包并追加到结果列表
             all_json_datas.extend(zip(doc_ids, json_datas))
 
             offset += batch_size  # 更新offset
 
         debug_logger.info(f"get_document: file_id: {file_id}, mysql parent documents res: {len(all_json_datas)}")
         if all_json_datas:
-            # 对所有数据进行排序
+            # 对所有数据进行排序【排序规则：按照data_id从小到大的顺序】
             all_json_datas.sort(key=lambda x: int(x[0]))
             # 解压排序后的结果
             sorted_json_datas = [json_data for _, json_data in all_json_datas]

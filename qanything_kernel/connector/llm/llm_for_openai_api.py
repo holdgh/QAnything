@@ -81,6 +81,9 @@ class OpenAILLM:
         return total_tokens
 
     def num_tokens_from_docs(self, docs):
+        """
+        返回文档列表内容所含token的数量
+        """
         total_tokens = 0
         for doc in docs:
             # 对每个文本进行分词
