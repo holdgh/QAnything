@@ -597,32 +597,44 @@ def fast_estimate_file_char_count(file_path):
 
 
 def replace_image_references(text, file_id):
+    """
+    依据文档内容和文件id对文档内容处理【图片单独算作一行，并对图片路径做了处理/qanything/assets/file_images/{file_id}/{image_path}】
+    """
+    # 分行
     lines = text.split('\n')
+    # 初始化列表
     result = []
 
     # 匹配带标题的图片引用
     pattern_with_caption = r'^!\[figure\]\((.+\.jpg)\s+(.+)\)$'
     # 匹配不带标题的图片引用
     pattern_without_caption = r'^!\[figure\]\((.+\.jpg)\)$'
-
+    # 遍历文档内容的每一行
     for line in lines:
         if not line.startswith('![figure]'):
+            # 如果当前行不以图片标识开始，则追加到结果中
             result.append(line)
             continue
-
+        # 匹配带标题的图片引用
         match_with_caption = re.match(pattern_with_caption, line)
+        # 匹配不带标题的图片引用
         match_without_caption = re.match(pattern_without_caption, line)
         if match_with_caption:
+            # 如果当前行存在带标题的图片引用，则将对应的字符串分组，分为图片路径和标题
             image_path, caption = match_with_caption.groups()
             debug_logger.info(f"line: {line}, caption: {caption}")
+            # 将标题追加到结果中
             result.append(f"#### {caption}")
+            # 将文件id和图片路径追加到结果中，注意这里图片路径的处理/qanything/assets/file_images/{file_id}/{image_path}
             result.append(f"![figure](/qanything/assets/file_images/{file_id}/{image_path})")
         elif match_without_caption:
+            # 如果当前行存在不带标题的图片引用，则直接获取图片路径，并将图片路径追加到结果中
             image_path = match_without_caption.group(1)
             result.append(f"![figure](/qanything/assets/file_images/{file_id}/{image_path})")
         else:
+            # 当前行不含图片，直接追加到结果中
             result.append(line)
-
+    # 合并每一行的结果为文档内容【图片单独算一行】，并返回
     return '\n'.join(result)
 
 def check_and_transform_excel(binary_data):

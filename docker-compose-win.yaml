@@ -38,6 +38,7 @@ services:
       retries: 3
 
   etcd:
+#    分布式键值存储，类似于redis
     container_name: milvus-etcd-local
     image: quay.io/coreos/etcd:v3.5.5
     environment:

@@ -212,36 +212,58 @@ class ParentRetriever:
 
     async def get_retrieved_documents(self, query: str, partition_keys: List[str], time_record: dict,
                                       hybrid_search: bool, top_k: int):
+        """
+        依据问题、知识库id、混合检索标识及超参数top_k检索文档列表
+        """
+        # milvus是向量数据库，用以处理向量相似度搜索，加速非结构化数据检索
+        # 设置向量检索起始时间
         milvus_start_time = time.perf_counter()
+        # 设置知识库id列表遍历查询条件
         expr = f'kb_id in {partition_keys}'
         # self.retriever.set_search_kwargs("mmr", k=VECTOR_SEARCH_TOP_K, expr=expr)
+        # 设置查询条件【注意top_k参数的作用】和查询类型为相似度查询
         self.retriever.set_search_kwargs("similarity", k=top_k, expr=expr)
+        # 依据问题和上述查询条件及查询类型执行查询
         query_docs = await self.retriever.aget_relevant_documents(query)
+        # 遍历查询结果
         for doc in query_docs:
+            # 为每个文档设置检索来源：milvus
             doc.metadata['retrieval_source'] = 'milvus'
+        # 计算向量检索耗时，并收集向量检索耗时数据【四舍五入，保留两位小数】
         milvus_end_time = time.perf_counter()
         time_record['retriever_search_by_milvus'] = round(milvus_end_time - milvus_start_time, 2)
-
+        # 如果没有开启混合检索，则直接返回向量数据库检索结果
         if not hybrid_search:
             return query_docs
-
+        # 当开启混合检索时，执行以下操作
         try:
             # filter = []
             # for partition_key in partition_keys:
+            # 设置es检索参数：知识库id列表
             filter = [{"terms": {"metadata.kb_id.keyword": partition_keys}}]
+            # 依据问题、超参数top_k和知识库id列表条件，执行es相似度检索
             es_sub_docs = await self.es_store.asimilarity_search(query, k=top_k, filter=filter)
             es_ids = []
+            # 获取向量数据库检索【milvus检索】的文档id列表
             milvus_doc_ids = [d.metadata[self.retriever.id_key] for d in query_docs]
+            # 遍历es检索结果
             for d in es_sub_docs:
                 if self.retriever.id_key in d.metadata and d.metadata[self.retriever.id_key] not in es_ids and d.metadata[self.retriever.id_key] not in milvus_doc_ids:
+                    # 如果es检索结果文档元数据中含有文档id且该文档id不在es检索文档id列表和不在milvus检索文档id列表中，则将该文档id收集到es检索文档id列表中
                     es_ids.append(d.metadata[self.retriever.id_key])
+            # 依据es检索文档id列表获取es检索文档
             es_docs = await self.retriever.docstore.amget(es_ids)
+            # 过滤掉es检索空文档
             es_docs = [d for d in es_docs if d is not None]
+            # 遍历es检索文档列表，设置检索来源为：es
             for doc in es_docs:
                 doc.metadata['retrieval_source'] = 'es'
+            # 计算es检索耗时，并收集es检索耗时数据【四舍五入，保留两位小数】
             time_record['retriever_search_by_es'] = round(time.perf_counter() - milvus_end_time, 2)
             debug_logger.info(f"Got {len(query_docs)} documents from vectorstore and {len(es_sub_docs)} documents from es, total {len(query_docs) + len(es_docs)} merged documents.")
+            # 在milvus检索结果中追加es检索文档列表
             query_docs.extend(es_docs)
         except Exception as e:
             debug_logger.error(f"Error in get_retrieved_documents on es_search: {e}")
+        # 返回最终检索得到的文档列表
         return query_docs

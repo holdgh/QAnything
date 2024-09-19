@@ -667,7 +667,9 @@ async def local_doc_chat(req: request):
         5、根据知识库id构建问答知识库id，并过滤掉不存在的问答知识库id，将剩余的问答知识库id列表统一收集到知识库id列表中
         6、获取知识库id列表对应的有效文件列表，如果有效文件列表为空，则将知识库id列表置为空，否则更新相应知识库的最新问答时间
         7、判断流式标志，进行答案检索
-        未完待续至862行
+            - 重构问题，获取源文档列表，对源文档列表去重、重排处理，在源文档列表中检索问题答案，有结果则返回【如果只需要检索文档，则直接返回源文档列表】
+            - 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
+        10、根据流式标志返回问题回答结果
     """
     # time.perf_counter()返回性能计数器的值（以小数秒为单位）作为浮点数，即具有最高可用分辨率的时钟，以测量短持续时间。 它确实包括睡眠期间经过的时间，并且是系统范围的。
     preprocess_start = time.perf_counter()
@@ -859,6 +861,8 @@ async def local_doc_chat(req: request):
             异步生成答案
             """
             debug_logger.info("start generate...")
+            # 重构问题，获取源文档列表，对源文档列表去重、重排处理，在源文档列表中检索问题答案，有结果则返回【如果只需要检索文档，则直接返回源文档列表】
+            # 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
             async for resp, next_history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                                     max_token=max_token,
                                                                                     kb_ids=kb_ids,
@@ -879,9 +883,12 @@ async def local_doc_chat(req: request):
                                                                                     top_p=top_p,
                                                                                     top_k=top_k
                                                                                     ):
+                # 获取响应中的答案
                 chunk_data = resp["result"]
                 if not chunk_data:
+                    # 如果响应中的答案为空，则继续遍历下一个响应
                     continue
+                # 获取答案字符串【原始响应中，answer为起始字符串标识，占用6个，答案内容从第7个开始】
                 chunk_str = chunk_data[6:]
                 if chunk_str.startswith("[DONE]"):
                     retrieval_documents = format_source_documents(resp["retrieval_documents"])

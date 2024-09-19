@@ -235,6 +235,7 @@ async def setup_workers(app, loop):
     # 创建数据库连接池
     app.ctx.pool = await aiomysql.create_pool(**db_config, minsize=1, maxsize=16, loop=loop, autocommit=False,
                                               init_command='SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED')  # 更改事务隔离级别
+    # 将数据库文档处理异步任务，在insert_files_server启动前，加入到sanic应用任务中
     app.add_task(check_and_process(app.ctx.pool))
 
 

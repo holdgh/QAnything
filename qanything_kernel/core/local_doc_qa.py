@@ -108,40 +108,51 @@ class LocalDocQA:
     @get_time_async
     async def get_source_documents(self, query, retriever: ParentRetriever, kb_ids, time_record, hybrid_search, top_k):
         """
-        获取源文档列表
+        获取源文档列表【向量检索、【混合检索标识为True时】es检索获取文档列表，过滤删除的文件，设置文档得分】
         kb_ids：知识库id列表、
         query【检索答案用到的问题，最终问题】、
         time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、
         retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】
-        hybrid_search：是否联网搜索
+        hybrid_search：混合检索标识【默认进行向量数据库检索，如果该标识为True，则追加es检索】
         top_k：值越大，结果越呈现多样性
         """
+        # 初始化源文档列表
         source_documents = []
         start_time = time.perf_counter()
+        # 依据问题、知识库id、混合检索标识及超参数top_k检索得到文档列表
         query_docs = await retriever.get_retrieved_documents(query, partition_keys=kb_ids, time_record=time_record,
                                                              hybrid_search=hybrid_search, top_k=top_k)
         if len(query_docs) == 0:
+            # 当检索不到文档时，重启向量数据库milvus客户端
             debug_logger.warning("MILVUS SEARCH ERROR, RESTARTING MILVUS CLIENT!")
             retriever.vectorstore_client = VectorStoreMilvusClient()
             debug_logger.warning("MILVUS CLIENT RESTARTED!")
+            # 重启向量数据库milvus客户端后，再次进行检索
             query_docs = await retriever.get_retrieved_documents(query, partition_keys=kb_ids, time_record=time_record,
                                                                     hybrid_search=hybrid_search, top_k=top_k)
+        # 计算检索耗时，并四舍五入保留两位小数，收集起来
         end_time = time.perf_counter()
         time_record['retriever_search'] = round(end_time - start_time, 2)
         debug_logger.info(f"retriever_search time: {time_record['retriever_search']}s")
         # debug_logger.info(f"query_docs num: {len(query_docs)}, query_docs: {query_docs}")
+        # 构建枚举对象【索引与元素所组成元组的集合】
         for idx, doc in enumerate(query_docs):
+            # 依据文档元数据中的文件id判断相应文件是否已删除【一个文件被切片为多个文档对象】，如果删除，则遍历下一个文档
             if retriever.mysql_client.is_deleted_file(doc.metadata['file_id']):
                 debug_logger.warning(f"file_id: {doc.metadata['file_id']} is deleted")
                 continue
+            # 当前文档对应的文件未删除时，将问题添加到文档元数据中
             doc.metadata['retrieval_query'] = query  # 添加查询到文档的元数据中
+            # 将词嵌入版本添加到文档元数据中
             doc.metadata['embed_version'] = self.embeddings.embed_version
             if 'score' not in doc.metadata:
+                # 当得分不在文档元数据中，按照该规则计算得分【1-索引值除以文档总数】【索引越小的文档得分越高，第一个文档得分为1】
                 doc.metadata['score'] = 1 - (idx / len(query_docs))  # TODO 这个score怎么获取呢
+            # 将当前文档追加到源文档列表中
             source_documents.append(doc)
         # if cosine_thresh:
         #     source_documents = [item for item in source_documents if float(item.metadata['score']) > cosine_thresh]
-
+        # 返回源文档列表
         return source_documents
 
     def reprocess_source_documents(self, custom_llm: OpenAILLM, query: str,
@@ -291,10 +302,18 @@ class LocalDocQA:
     async def prepare_source_documents(self, query: str, custom_llm: OpenAILLM, source_documents: List[Document],
                                        chat_history: List[str], prompt_template: str,
                                        need_web_search: bool = False):
+        """
+        预处理源文档列表
+        1、在不超过限制的token数量的前提下，将源文档列表中文档加入到新源文档列表中，得到检索文档列表
+        2、对上述检索源文档列表，在未开启联网搜索时，做聚合处理【聚合发生异常时，直接将检索文档列表赋值给源文档列表】，处理结果非空时，赋值给源文档列表；聚合处理结果为空时，初始化源文档列表为空，对检索文档列表做在文件id唯一意义下的按照文档id从小到大的排序处理，排序结果追加到源文档列表
+        3、在开启联网搜索时，直接将检索文档列表赋值给源文档列表
+        4、返回检索文档列表和处理后的源文档列表
+        """
         # 删除文档中的图片
         # for doc in source_documents:
         #     doc.page_content = re.sub(r'!\[figure]\(.*?\)', '', doc.page_content)
-        # 依据openAI大模型、当前问题、源文档列表、对话历史、提示词，处理源文档列表，得到新的源文档列表和限制的token数量【大模型所支持的上下文剩余token数量】
+        # 依据openAI大模型、当前问题、源文档列表、对话历史、提示词，处理源文档列表，得到检索文档列表和限制的token数量【大模型所支持的上下文剩余token数量】
+        # 在不超过限制的token数量的前提下，将源文档列表中文档加入到新源文档列表中，得出检索文档列表
         retrieval_documents, limited_token_nums = self.reprocess_source_documents(custom_llm=custom_llm, query=query,
                                                                                   source_docs=source_documents,
                                                                                   history=chat_history,
@@ -307,27 +326,38 @@ class LocalDocQA:
                 # 为什么源文档列表至多有两个文件id时才会聚合，否则此结果得到的是空列表
                 new_docs = self.aggregate_documents(retrieval_documents, limited_token_nums, custom_llm)
                 if new_docs:
+                    # 聚合处理结果非空时，赋值给源文档列表
                     source_documents = new_docs
                 else:
+                    # 聚合处理结果为空时
                     # 合并所有候选文档，从前往后，所有file_id相同的文档合并，按照doc_id排序
                     merged_documents_file_ids = []
+                    # 遍历检索文档列表，得到去重后的文件id列表
                     for doc in retrieval_documents:
                         if doc.metadata['file_id'] not in merged_documents_file_ids:
                             merged_documents_file_ids.append(doc.metadata['file_id'])
+                    # 初始化源文档列表为空列表，重新收集
                     source_documents = []
+                    # 遍历去重后的文件id列表
                     for file_id in merged_documents_file_ids:
+                        # 在检索文档列表中检索当前文件id对应的文档列表
                         docs = [doc for doc in retrieval_documents if doc.metadata['file_id'] == file_id]
+                        # 对当前文件id对应的文档列表，按照文档id从小到大排序
                         docs = sorted(docs, key=lambda x: int(x.metadata['doc_id'].split('_')[-1]))
+                        # 将当前文件id对应的【按照文档id从小到大排序后的】文档列表追加到源文档列表中
                         source_documents.extend(docs)
 
                 # source_documents = self.incomplete_table(source_documents, limited_token_nums, custom_llm)
             except Exception as e:
+                # 聚合异常时，将满足大模型token限制数量的文档列表【检索文档列表】赋值给源文档列表
                 debug_logger.error(f"aggregate_documents error w/ {e}: {traceback.format_exc()}")
                 source_documents = retrieval_documents
         else:
+            # 开启联网搜索时，将满足大模型token限制数量的文档列表【检索文档列表】赋值给源文档列表
             source_documents = retrieval_documents
 
         debug_logger.info(f"source_documents len: {len(source_documents)}")
+        # 返回处理后的源文档列表【同样满足大模型token限制数量，在不联网搜索且聚合结果非空时，为聚合处理结果】和满足大模型token限制数量的文档列表【检索文档列表】
         return source_documents, retrieval_documents
 
     async def calculate_relevance_optimized(
@@ -405,11 +435,17 @@ class LocalDocQA:
         流程：
             1、获取openai大模型对象【内含指定模型的编码器】
             2、利用历史对话记录列表和当前问题进行重构，生成独立且语义完整的新问题retrieval_query
-            3、依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档列表
+            3、依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档列表【向量检索、【混合检索标识为True时】es检索获取文档列表，过滤删除的文件，设置文档得分】
             4、判断是否开启联网搜索，若开启，则依据当前问题进行联网搜索，并将搜索到的文档追加到源文档列表中
             5、对源文档列表进行去重、重排rerank、标识及评分过滤处理
-            6、遍历源文档列表，依据当前问题对源文档进行逐个匹配，匹配成功，则构造返回结果。如果在源文档列表中没有找到答案，则进行后续处理
-            未完待续564行
+            6、遍历源文档列表，依据当前问题对源文档进行逐个匹配，匹配成功，【如果只需要检索文档，则直接返回源文档列表】，则构造返回结果。如果在源文档列表中没有找到答案，则进行后续处理
+            7、取前30个源文档组成新的源文档列表，然后依据源文档列表是否为空来构造提示词模板
+            8、依据提示词、源文档列表、对话历史、联网搜索标识及大模型参数，对源文档列表做预处理，得到新的源文档列表【满足大模型的限制token数量要求。1、非联网搜索且聚合结果非空时为聚合处理结果；2、聚合异常时，为检索文档列表；3、聚合结果为空时，为检索文档列表在文件id唯一意义下按照文档id从小到大排序处理后的文档列表】和检索文档列表【满足大模型的限制token数量要求，没有聚合处理，也没有排序】
+            9、对源文档中的图片做处理【图片单独算作一行，并对图片路径做了处理/qanything/assets/file_images/{file_id}/{image_path}】
+            10、如果只检索文档而不用精确回答，则直接返回源文档作为结果。否则，进行下一步。
+            11、根据问题、源文档列表、提示词模板生成提示词；计算提示词和对话历史的token数量
+            12、依据提示词、对话历史和流式回答标识调用大模型，获取回答结果列表，并遍历列表构造响应结果【精确答案、图文列表等】和包含当前问题和回答的对话历史
+            13、返回响应结果和对话历史
         """
         # 获取openai大模型对象：内含指定模型的编码器、openai请求客户端
         custom_llm = OpenAILLM(model, max_token, api_base, api_key, api_context_length, top_p, temperature)
@@ -493,7 +529,7 @@ class LocalDocQA:
                 retrieval_query = condense_question
 
         if kb_ids:
-            # 如果知识库id列表非空，则依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档
+            # 如果知识库id列表非空，则依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档【向量检索、【混合检索标识为True时】es检索获取文档列表，过滤删除的文件，设置文档得分】
             source_documents = await self.get_source_documents(retrieval_query, retriever, kb_ids, time_record,
                                                                hybrid_search, top_k)
         else:
@@ -518,11 +554,11 @@ class LocalDocQA:
         # 对源文档列表进行去重
         source_documents = deduplicate_documents(source_documents)
         if rerank and len(source_documents) > 1 and num_tokens_rerank(query) <= 300:
-            # 如果进行重排，且源文档列表非空，且当前问题重排后是使用的token数量不超过300，则进行以下处理
+            # 如果进行重排，且源文档列表非空，且当前问题重排后的token数量不超过300，则进行以下处理
             try:
                 t1 = time.perf_counter()
                 debug_logger.info(f"use rerank, rerank docs num: {len(source_documents)}")
-                # 对源文档列表进行重排处理？
+                # 对源文档列表进行重排处理【异步调用本地rerank服务，获取每个文档对于问题的得分，并按照得分从大到小进行排序】
                 source_documents = await self.rerank.arerank_documents(condense_question, source_documents)
                 t2 = time.perf_counter()
                 # 记录源文档列表重排消耗时间
@@ -630,71 +666,96 @@ class LocalDocQA:
         #         total_images_number += len(doc.metadata['images'])
         #     doc.page_content = replace_image_references(doc.page_content, doc.metadata['file_id'])
         # debug_logger.info(f"total_images_number: {total_images_number}")
-        # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到检索文档列表
+        # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到新的源文档列表【满足大模型的限制token数量要求。1、非联网搜索且聚合结果非空时为聚合处理结果；2、聚合异常时，为检索文档列表；3、聚合结果为空时，为检索文档列表在文件id唯一意义下按照文档id从小到大排序处理后的文档列表】和检索文档列表【满足大模型的限制token数量要求，没有聚合处理，也没有排序】
         source_documents, retrieval_documents = await self.prepare_source_documents(query, custom_llm, source_documents,
                                                                                     chat_history,
                                                                                     prompt_template,
                                                                                     need_web_search)
-
+        # 初始化总图片数量
         total_images_number = 0
+        # 遍历源文档列表，收集每个文档的图片数量至总图片数量
         for doc in source_documents:
             if doc.metadata.get('images', []):
+                # 当前文档元数据中的图片非空时，将其图片数量累加至总图片数量
                 total_images_number += len(doc.metadata['images'])
+                # 依据文档内容和文件id对文档内容处理【图片单独算作一行，并对图片路径做了处理/qanything/assets/file_images/{file_id}/{image_path}】
                 doc.page_content = replace_image_references(doc.page_content, doc.metadata['file_id'])
         debug_logger.info(f"total_images_number: {total_images_number}")
 
         t2 = time.perf_counter()
+        # 计算文档预处理耗时，并收集耗时数据
         time_record['reprocess'] = round(t2 - t1, 2)
         if only_need_search_results:
+            # 如果只需要文档检索结果，则直接返回
             yield source_documents, None
             return
 
         t1 = time.perf_counter()
         has_first_return = False
-
+        # 初始化精确回答
         acc_resp = ''
+        # 根据问题、源文档列表、提示词模板生成提示词
         prompt = self.generate_prompt(query=query,
                                       source_docs=source_documents,
                                       prompt_template=prompt_template)
         # debug_logger.info(f"prompt: {prompt}")
+        # 计算提示词和对话历史的token数量
         est_prompt_tokens = num_tokens(prompt) + num_tokens(str(chat_history))
+        # 依据提示词、对话历史和流式回答标识调用大模型，获取回答结果列表，并遍历列表
         async for answer_result in custom_llm.generatorAnswer(prompt=prompt, history=chat_history, streaming=streaming):
+            # 提取大模型结果中的答案
             resp = answer_result.llm_output["answer"]
             if 'answer' in resp:
+                # 如果答案中存在answer字符串，则从第7个截取并进行json渲染得到字段，取出answer对应值，拼接到精确答案中
                 acc_resp += json.loads(resp[6:])['answer']
+            # 获取答案中的提示词
             prompt = answer_result.prompt
+            # 获取答案中的对话历史【已含有当前问题和回答，且位于最后一位】
             history = answer_result.history
+            # 获取答案中的token数量【提示词token数量与完整回答的token数量之和】
             total_tokens = answer_result.total_tokens
+            # 获取答案中的提示词token数量
             prompt_tokens = answer_result.prompt_tokens
+            # 获取答案中的完整回答token数量
             completion_tokens = answer_result.completion_tokens
+            # 获取当前问题
             history[-1][0] = query
+            # 构造答案响应
             response = {"query": query,
                         "prompt": prompt,
                         "result": resp,
                         "condense_question": condense_question,
                         "retrieval_documents": retrieval_documents,
                         "source_documents": source_documents}
+            # 记录提示词token数量、完整回答token数量、提示词和完整回答的token总数量
             time_record['prompt_tokens'] = prompt_tokens if prompt_tokens != 0 else est_prompt_tokens
             time_record['completion_tokens'] = completion_tokens if completion_tokens != 0 else num_tokens(acc_resp)
             time_record['total_tokens'] = total_tokens if total_tokens != 0 else time_record['prompt_tokens'] + \
                                                                                  time_record['completion_tokens']
             if has_first_return is False:
+                # 首次返回
                 first_return_time = time.perf_counter()
                 has_first_return = True
+                # 记录首次返回耗时
                 time_record['llm_first_return'] = round(first_return_time - t1, 2)
             if resp[6:].startswith("[DONE]"):
+                # 如果答案从第7个字符起，以[DONE]开始，则为答案结束标志，记录最后一次返回耗时
                 last_return_time = time.perf_counter()
                 time_record['llm_completed'] = round(last_return_time - t1, 2) - time_record['llm_first_return']
+                # 将对话历史中的当前问题的答案赋值为精确回答
                 history[-1][1] = acc_resp
                 if total_images_number != 0:  # 如果有图片，需要处理回答带图的情况
+                    # 获取源文档中的带有图片的文档列表
                     docs_with_images = [doc for doc in source_documents if doc.metadata.get('images', [])]
                     time1 = time.perf_counter()
+                    # 此处做啥？
                     relevant_docs = await self.calculate_relevance_optimized(
                         question=query,
                         llm_answer=acc_resp,
                         reference_docs=docs_with_images,
                         top_k=1
                     )
+                    # 初始化要返回的图文列表
                     show_images = ["\n### 引用图文如下：\n"]
                     for doc in relevant_docs:
                         print(f"文档: {doc['document']}...")  # 只打印前50个字符
@@ -703,16 +764,21 @@ class LocalDocQA:
                         print(f"原始问题相关性分数: {doc['question_score']:.4f}")
                         print(f"综合得分: {doc['combined_score']:.4f}")
                         print()
+                        # 遍历文档所含图片列表
                         for image in doc['document'].metadata.get('images', []):
+                            # 依据文档内容和文件id对文档内容处理【图片单独算作一行，并对图片路径做了处理/qanything/assets/file_images/{file_id}/{image_path}】，返回带有图片的文本内容
                             image_str = replace_image_references(image, doc['document'].metadata['file_id'])
                             debug_logger.info(f"image_str: {image} -> {image_str}")
+                            # 收集带有图片的文本内容
                             show_images.append(image_str + '\n')
                     debug_logger.info(f"show_images: {show_images}")
+                    # 记录获取图片耗时
                     time_record['obtain_images'] = round(time.perf_counter() - last_return_time, 2)
                     time2 = time.perf_counter()
                     debug_logger.info(f"obtain_images time: {time2 - time1}s")
                     time_record["obtain_images_time"] = round(time2 - time1, 2)
                     if len(show_images) > 1:
+                        # 图文列表超过1个图文时，在响应中设置图文信息
                         response['show_images'] = show_images
             yield response, history
 
