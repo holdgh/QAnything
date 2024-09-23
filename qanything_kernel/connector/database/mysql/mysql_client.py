@@ -274,6 +274,9 @@ class KnowledgeBaseManager:
         debug_logger.info("All tables and indexes checked/created successfully.")
 
     def update_file_msg(self, file_id, msg):
+        """
+        依据文件id更新文件信息中的msg值
+        """
         query = "UPDATE File SET msg = %s WHERE file_id = %s"
         insert_logger.info(f"Update file msg: {file_id} {msg}")
         self.execute_query_(query, (msg, file_id), commit=True)
@@ -663,9 +666,11 @@ class KnowledgeBaseManager:
             return None
 
     def get_faq(self, faq_id) -> tuple:
+        # 依据问答id获取问答信息
         query = "SELECT user_id, kb_id, question, answer, nos_keys FROM Faqs WHERE faq_id = %s"
         faq_all = self.execute_query_(query, (faq_id,), fetch=True)
         if faq_all:
+            # 如果问答信息对应多个，则取第一个
             faq = faq_all[0]
             debug_logger.info(f"get_faq: faq_id: {faq_id}, mysql res: {faq}")
             return faq

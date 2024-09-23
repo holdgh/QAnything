@@ -298,7 +298,7 @@ async def upload_files(req: request):
         file_location = local_file.file_location
         # 将local_file收集到local_files列表中，这些文件都是校验通过的文件
         local_files.append(local_file)
-        # 上传文件【文件信息添加到数据库中】
+        # 保存文件信息【文件信息添加到数据库中】
         msg = local_doc_qa.milvus_summary.add_file(file_id, user_id, kb_id, file_name, file_size, file_location,
                                                    chunk_size, timestamp)
         debug_logger.info(f"{file_name}, {file_id}, {msg}")

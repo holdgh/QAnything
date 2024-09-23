@@ -240,6 +240,9 @@ rerank_tokenizer = AutoTokenizer.from_pretrained(LOCAL_RERANK_PATH, local_files_
 
 
 def num_tokens_embed(text: str) -> int:
+    """
+    计算字符串的token数量
+    """
     """Return the number of tokens in a string."""
     return len(embedding_tokenizer.encode(text, add_special_tokens=True))
 

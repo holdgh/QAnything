@@ -63,31 +63,55 @@ def get_pdf_result_sync(file_path):
 
 class LocalFileForInsert:
     def __init__(self, user_id, kb_id, file_id, file_location, file_name, file_url, chunk_size, mysql_client):
+        # 文件切片尺寸
         self.chunk_size = chunk_size
+        # 递归切片对象
         self.markdown_text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=0,
                                                                      length_function=num_tokens_embed)
+        # 用户id
         self.user_id = user_id
+        # 知识库id
         self.kb_id = kb_id
+        # 文件id
         self.file_id = file_id
+        # 初始化文件切片得到的文档列表
         self.docs: List[Document] = []
+        # 初始化词嵌入列表【什么作用？】
         self.embs = []
+        # 文件名
         self.file_name = file_name
+        # 文件位置
         self.file_location = file_location
+        # 文件路由，用以收集链接地址
         self.file_url = ""
+        # 问答字典【什么作用？收集问答集信息】
         self.faq_dict = {}
+        # 文件路径
         self.file_path = ""
+        # MySQL客户端
         self.mysql_client = mysql_client
         if self.file_location == 'FAQ':
+            # 当文件位置是FAQ时，表示文件为问答集
+            # 获取问答信息
             faq_info = self.mysql_client.get_faq(self.file_id)
+            # 从问答信息中提取字段
             user_id, kb_id, question, answer, nos_keys = faq_info
+            # 设置问答字段
             self.faq_dict = {'question': question, 'answer': answer, 'nos_keys': nos_keys}
         elif self.file_location == 'URL':
+            # 当文件位置是URL，表示链接地址
+            # 设置文件路由
             self.file_url = file_url
+            # 获取上传地址
             upload_path = os.path.join(UPLOAD_ROOT_PATH, user_id)
+            # 获取文件路径
             file_dir = os.path.join(upload_path, self.kb_id, self.file_id)
+            # 创建文件路径
             os.makedirs(file_dir, exist_ok=True)
+            # 获取文件绝对路径
             self.file_path = os.path.join(file_dir, self.file_name)
         else:
+            # 当文件位置非上述两种情况时，直接赋值文件位置为文件路径
             self.file_path = self.file_location
         self.event = threading.Event()
 
@@ -253,6 +277,9 @@ class LocalFileForInsert:
 
     @get_time
     def url_to_documents(self, file_path, file_name, file_url, dir_path="tmp_files", max_retries=3):
+        """
+        由链接地址，借助爬虫，生成文档对象列表
+        """
         full_dir_path = os.path.join(os.path.dirname(file_path), dir_path)
         if not os.path.exists(full_dir_path):
             os.makedirs(full_dir_path)
@@ -364,91 +391,150 @@ class LocalFileForInsert:
 
     @get_time
     def split_file_to_docs(self):
+        """
+        将单个文件切分成文档列表
+        """
+        # 打印开始切片日志
         insert_logger.info(f"start split file to docs, file_path: {self.file_name}")
         if self.faq_dict:
+            # 问答字典非空，表示问答集模式
+            # 直接利用文档字典构造文档对象列表
             docs = [Document(page_content=self.faq_dict['question'], metadata={"faq_dict": self.faq_dict})]
         elif self.file_url:
+            # 链接地址非空，表示链接，借助爬虫生成文档
             insert_logger.info("load url: {}".format(self.file_url))
             docs = self.url_to_documents(self.file_path, self.file_name, self.file_url)
             if docs is None:
+                # 如果爬虫所得文档列表为空
                 try:
+                    # 使用newspaper工具，传入链接地址，获取解析文章
                     article = newspaper.article(self.file_url, timeout=120)
+                    # 利用文章构造文档对象列表
                     docs = [
                         Document(page_content=article.text, metadata={"title": article.title, "url": self.file_url})]
                 except Exception as e:
+                    # 利用newspaper工具异常
+                    # 打印异常日志
                     insert_logger.error(f"newspaper get url error: {self.file_url}, {traceback.format_exc()}")
+                    # 递归获取url开头的所有链接？
                     loader = MyRecursiveUrlLoader(url=self.file_url)
                     docs = loader.load()
         elif self.file_path.lower().endswith(".md"):
+            # markdown文件
             try:
+                # 将markdown文件处理为文档列表
                 docs = convert_markdown_to_langchaindoc(self.file_path)
                 docs = self.markdown_process(docs)
             except Exception as e:
+                # markdown文件切片异常
+                # 打印异常日志
                 insert_logger.error(
                     f"convert_markdown_to_langchaindoc error: {self.file_path}, {traceback.format_exc()}")
+                # 利用非结构化文件加载器获取文档列表
                 loader = UnstructuredFileLoader(self.file_path, strategy="fast")
                 docs = loader.load()
         elif self.file_path.lower().endswith(".txt"):
+            # 文本文件，txt文件
             docs = self.load_text(self.file_path)
         elif self.file_path.lower().endswith(".pdf"):
+            # pdf文件
+            # 将pdf文件转换为markdown文件
             markdown_file = get_pdf_result_sync(self.file_path)
             if markdown_file:
+                # markdown文件非空
+                # 将markdown文件处理为文档列表
                 docs = convert_markdown_to_langchaindoc(markdown_file)
                 docs = self.markdown_process(docs)
+                # 构造图片路径
                 images_dir = os.path.join(IMAGES_ROOT_PATH, self.file_id)
+                # 拷贝图片至指定目录
                 self.copy_images(os.path.dirname(markdown_file), images_dir)
             else:
+                # markdown文件为空
+                # 打印pdf解析异常日志
                 insert_logger.warning(
                     f'Error in Powerful PDF parsing, use fast PDF parser instead.')
+                # 使用非结构化pdf加载器处理获取文档列表
                 loader = UnstructuredPaddlePDFLoader(self.file_path, strategy="fast")
                 docs = loader.load()
         elif self.file_path.lower().endswith(".jpg") or self.file_path.lower().endswith(
                 ".png") or self.file_path.lower().endswith(".jpeg"):
+            # 图片文件，jpg,png,jpeg，后缀名忽略大小写
+            # 利用ocr，将图片转换为文本文件，利用TextLoader获取文档列表
             txt_file_path = self.image_ocr_txt(filepath=self.file_path)
             loader = TextLoader(txt_file_path, autodetect_encoding=True)
             docs = loader.load()
         elif self.file_path.lower().endswith(".docx"):
+            # word文件
             try:
+                # 利用非结构化word文档加载器获取文档列表
                 loader = UnstructuredWordDocumentLoader(self.file_path, strategy="fast")
                 docs = loader.load()
             except Exception as e:
+                # word文件处理异常
                 insert_logger.warning('Error in Powerful Word parsing, use docx2txt instead.')
+                # 利用docx2txt工具处理，获取文件内容，构造文档对象列表
                 text = docx2txt.process(self.file_path)
                 docs = [Document(page_content=text)]
         elif self.file_path.lower().endswith(".xlsx"):
+            # excel文件
             try:
+                # 将excel转为markdown文件，处理markdown文件获取文档列表
                 markdown_file = self.excel_to_markdown(self.file_path, os.path.dirname(self.file_path))
                 docs = convert_markdown_to_langchaindoc(markdown_file)
                 docs = self.markdown_process(docs)
             except Exception as e:
+                # excel转markdown异常
+                # 打印异常日志
                 insert_logger.warning('Error in Powerful Excel parsing, use openpyxl instead.')
+                # 初始化文档列表
                 docs = []
+                # 利用pandas工具，依据excel文件路径获取excel文件
                 excel_file = pd.ExcelFile(self.file_path)
+                # 获取excel文件的工作簿名称列表
                 sheet_names = excel_file.sheet_names
+                # 遍历工作波名称列表【枚举，索引+对应索引的元素【也即工作簿名称】】
                 for idx, sheet_name in enumerate(sheet_names):
+                    # 利用pandas工具读取指定excel文件路径的工作簿
                     xlsx = pd.read_excel(self.file_path, sheet_name=sheet_name, engine='openpyxl')
                     xlsx = xlsx.dropna(how='all', axis=1)  # 只删除全为空的列
                     xlsx = xlsx.dropna(how='all', axis=0)  # 只删除全为空的行
+                    # 构造csv文件绝对路径名
                     csv_file_path = self.file_path[:-5] + f'_{idx}.csv'
+                    # 将excel工作簿非空行列的数据转为csv文件
                     xlsx.to_csv(csv_file_path, index=False)
+                    # 打印csv文件路径
                     insert_logger.info('xlsx2csv: %s', csv_file_path)
+                    # 利用csv加载器结合csv文件路径，获取文档列表
                     loader = CSVLoader(csv_file_path, autodetect_encoding=True,
                                        csv_args={"delimiter": ",", "quotechar": '"'})
                     docs.extend(loader.load())
         elif self.file_path.lower().endswith(".pptx"):
+            # ppt文件
+            # 利用非结构化ppt加载器获取文档列表
             loader = UnstructuredPowerPointLoader(self.file_path, strategy="fast")
             docs = loader.load()
         elif self.file_path.lower().endswith(".eml"):
+            # 邮箱文件
+            # 利用非结构化邮箱加载器获取文档列表
             loader = UnstructuredEmailLoader(self.file_path, strategy="fast")
             docs = loader.load()
         elif self.file_path.lower().endswith(".csv"):
+            # csv文件
+            # 利用csv加载器结合csv文件路径，获取文档列表
             loader = CSVLoader(self.file_path, autodetect_encoding=True, csv_args={"delimiter": ",", "quotechar": '"'})
             docs = loader.load()
         else:
+            # 其他类型文件，抛出异常
             raise TypeError("文件类型不支持，目前仅支持：[md,txt,pdf,jpg,png,jpeg,docx,xlsx,pptx,eml,csv]")
+        # 设置文档元数据并执行合并处理
         self.inject_metadata(docs)
 
     def inject_metadata(self, docs: List[Document]):
+        """
+        遍历文档列表，为每个文档设置元数据【用户id、知识库id、文件id、文件名称、文件位置、文件路由、标题列表、是否含有表格、图片路径、页面id、headers、问答字典】
+        对于文档内容较小的文档，执行合并处理，最终返回合并后的文档
+        """
         # 这里给每个docs片段的metadata里注入file_id
         new_docs = []
         for doc in docs:
@@ -483,32 +569,48 @@ class LocalFileForInsert:
 
         # merge short docs
         insert_logger.info(f"before merge doc lens: {len(new_docs)}")
+        # 取默认切片尺寸400和实际切片尺寸一半的最小值
         child_chunk_size = min(DEFAULT_CHILD_CHUNK_SIZE, int(self.chunk_size / 2))
+        # 合并的文档列表
         merged_docs = []
         for doc_idx, doc in enumerate(new_docs):
             if not merged_docs:
+                # 合并文档列表为空，则将当前文档追加至其中
                 merged_docs.append(doc)
             else:
+                # 合并文档列表非空，则取其最后一个文档
                 last_doc = merged_docs[-1]
                 # insert_logger.info(f"doc_idx: {doc_idx}, doc_content: {doc.page_content[:100]}")
                 # insert_logger.info(f"last_doc_len: {num_tokens_embed(last_doc.page_content)}, doc_len: {num_tokens_embed(doc.page_content)}")
                 if num_tokens_embed(last_doc.page_content) + num_tokens_embed(doc.page_content) <= child_chunk_size or \
                         num_tokens_embed(doc.page_content) < child_chunk_size / 4:
+                    # 最后一个文档和当前文档的内容token数量之和不超过child_chunk_size时，或者当前文档的内容token数量少于child_chunk_size的1/4时
+                    # 将当前文档的内容按照换行符切分，得到临时内容切片列表
                     tmp_content_slices = doc.page_content.split('\n')
                     # print(last_doc.metadata['title_lst'], tmp_content)
+                    # 收集非最后一个文档标题行【有种相对最后一个文档去重的意思】的行内容列表
                     tmp_content_slices_clear = [line for line in tmp_content_slices if clear_string(line) not in
                                                 [clear_string(t) for t in last_doc.metadata['title_lst']]]
+                    # 利用换行符将上述行内容列表拼接为临时文档内容
                     tmp_content = '\n'.join(tmp_content_slices_clear)
                     # for title in last_doc.metadata['title_lst']:
                     #     tmp_content = tmp_content.replace(title, '')
+                    # 将临时文档内容追加到最后一个文档内容中
                     last_doc.page_content += '\n\n' + tmp_content
                     # for title in last_doc.metadata['title_lst']:
                     #     last_doc.page_content = self.remove_substring_after_first(last_doc.page_content, '![figure]')
+                    # 将当前文档元数据中的标题列表追加到最后一个文档元数据的标题列表中
                     last_doc.metadata['title_lst'] += doc.metadata.get('title_lst', [])
+                    # 将当前文档元数据中的表格标识合并到最后一个文档元数据的表格标识上，逻辑或
                     last_doc.metadata['has_table'] = last_doc.metadata.get('has_table', False) or doc.metadata.get(
                         'has_table', False)
+                    # 将当前文档元数据中的图片列表追加到最后一个文档元数据的图片列表中
                     last_doc.metadata['images'] += doc.metadata.get('images', [])
                 else:
+                    # 最后一个文档和当前文档的内容token数量之和超过child_chunk_size且当前文档的内容token数量不少于child_chunk_size的1/4时
+                    # 将当前文档收集到合并文档列表中【相当于没有合并】
                     merged_docs.append(doc)
+        # 打印合并后的文档列表长度
         insert_logger.info(f"after merge doc lens: {len(merged_docs)}")
+        # 更新切片所得文档列表
         self.docs = merged_docs

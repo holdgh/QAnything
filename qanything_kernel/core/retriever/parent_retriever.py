@@ -76,14 +76,21 @@ class SelfParentRetriever(ParentDocumentRetriever):
             single_parent: bool = False,
     ) -> Tuple[int, Dict]:
         # insert_logger.info(f"Inserting {len(documents)} complete documents, single_parent: {single_parent}")
+        # 切分起始时间
         split_start = time.perf_counter()
         if self.parent_splitter is not None and not single_parent:
+            # 父切分符非空且非单亲时
             # documents = self.parent_splitter.split_documents(documents)
+            # 初始化切分文档列表和需要切分的文档列表
             split_documents = []
             need_split_docs = []
+            # 遍历文档列表
             for doc in documents:
                 if doc.metadata['has_table'] or num_tokens_embed(doc.page_content) <= parent_chunk_size:
+                    # 当前文档有表格或者当前文档内容的token数量不超过父切分尺寸时
                     if need_split_docs:
+                        # 需要切分的文档列表非空时
+                        # todo 至此，待续
                         split_documents.extend(self.parent_splitter.split_documents(need_split_docs))
                         need_split_docs = []
                     split_documents.append(doc)
@@ -185,28 +192,46 @@ class ParentRetriever:
 
     @get_time_async
     async def insert_documents(self, docs, parent_chunk_size, single_parent=False):
+        """
+        将文档列表插入到向量数据库
+        """
+        # 打印日志：文档列表的长度、切片尺寸
         insert_logger.info(f"Inserting {len(docs)} documents, parent_chunk_size: {parent_chunk_size}, single_parent: {single_parent}")
         if parent_chunk_size != self.parent_chunk_size:
+            # 切片尺寸不等，以参数中的切片尺寸为准
             self.parent_chunk_size = parent_chunk_size
+            # 父切分符号
             parent_splitter = RecursiveCharacterTextSplitter(
                 separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
                 chunk_size=parent_chunk_size,
+                # 切分重叠设置为0
                 chunk_overlap=0,
+                # 长度函数：计算字符串的token数量
                 length_function=num_tokens_embed)
+            # 设置子切分尺寸，取默认子切分尺寸和当前父切分尺寸一半的最小值
             child_chunk_size = min(DEFAULT_CHILD_CHUNK_SIZE, int(parent_chunk_size / 2))
+            # 子切分符号
             child_splitter = RecursiveCharacterTextSplitter(
                 separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
                 chunk_size=child_chunk_size,
+                # 切分重叠设置为切分尺寸的1/4
                 chunk_overlap=int(child_chunk_size / 4),
+                # 长度函数：计算字符串的token数量
                 length_function=num_tokens_embed)
             self.retriever = SelfParentRetriever(
+                # 向量存储设置为向量数据库客户端
                 vectorstore=self.vectorstore_client.local_vectorstore,
+                # 文档存储设置为数据库客户端
                 docstore=MysqlStore(self.mysql_client),
+                # 子切分符
                 child_splitter=child_splitter,
+                # 父切分符
                 parent_splitter=parent_splitter
             )
         # insert_logger.info(f'insert documents: {len(docs)}')
+        # 当single_parent为False时，ids为None；当single_parent为True时，ids为文档id列表
         ids = None if not single_parent else [doc.metadata['doc_id'] for doc in docs]
+        # 插入文档列表，入参：文档列表、父切分尺寸、es存储、文档id列表、单亲标识
         return await self.retriever.aadd_documents(docs, parent_chunk_size=parent_chunk_size,
                                                    es_store=self.es_store, ids=ids, single_parent=single_parent)
 
