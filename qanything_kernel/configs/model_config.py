@@ -136,7 +136,9 @@ LOCAL_EMBED_MODEL_NAME = 'embed'
 LOCAL_EMBED_MAX_LENGTH = 512
 LOCAL_EMBED_BATCH = 1
 LOCAL_EMBED_THREADS = 1
+# 词嵌入路径
 LOCAL_EMBED_PATH = os.path.join(root_path, 'qanything_kernel/dependent_server/embedding_server', 'embedding_model_configs_v0.0.1')
+# 词嵌入模型路径，在embedding_server启动前，用以创建一个EmbeddingAsyncBackend对象
 LOCAL_EMBED_MODEL_PATH = os.path.join(LOCAL_EMBED_PATH, "embed.onnx")
 
 TOKENIZER_PATH = os.path.join(root_path, 'qanything_kernel/connector/llm/tokenizer_files')

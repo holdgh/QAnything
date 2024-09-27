@@ -34,9 +34,10 @@ app = Sanic("embedding_server")
 @app.route("/embedding", methods=["POST"])
 async def embedding(request):
     data = request.json
+    # 获取请求中的文本列表
     texts = data.get('texts')
     # print("local embedding texts number:", len(texts), flush=True)
-
+    # 利用EmbeddingAsyncBackend对象进行文本到词向量的转化处理
     onnx_backend: EmbeddingAsyncBackend = request.app.ctx.onnx_backend
     result_data = await onnx_backend.embed_documents_async(texts)
     # print("local embedding result number:", len(result_data), flush=True)
@@ -47,6 +48,7 @@ async def embedding(request):
 
 @app.listener('before_server_start')
 async def setup_onnx_backend(app, loop):
+    # 服务启动前，设置onnx_backend属性为EmbeddingAsyncBackend对象【利用onnxruntime框架，基于词嵌入模型，对文本进行词向量转换处理】
     app.ctx.onnx_backend = EmbeddingAsyncBackend(model_path=LOCAL_EMBED_MODEL_PATH, 
                                                  use_cpu=not args.use_gpu, num_threads=LOCAL_EMBED_THREADS)
 
