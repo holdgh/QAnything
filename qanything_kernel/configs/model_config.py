@@ -129,6 +129,7 @@ LOCAL_RERANK_MAX_LENGTH = 512
 LOCAL_RERANK_BATCH = 1
 LOCAL_RERANK_THREADS = 1
 LOCAL_RERANK_PATH = os.path.join(root_path, 'qanything_kernel/dependent_server/rerank_server', 'rerank_model_configs_v0.0.1')
+# rerank模型路径，在rerank_server启动前，用以创建RerankAsyncBackend对象
 LOCAL_RERANK_MODEL_PATH = os.path.join(LOCAL_RERANK_PATH, "rerank.onnx")
 
 LOCAL_EMBED_SERVICE_URL = "localhost:9001"

@@ -33,10 +33,12 @@ app = Sanic("rerank_server")
 @app.route("/rerank", methods=["POST"])
 async def rerank(request):
     data = request.json
+    # 获取入参中问题和passages【文档内容列表吗？】
     query = data.get('query')
     passages = data.get('passages')
-    # 这是什么语法？
+    # 这是什么语法？获取应用上下文中的RerankAsyncBackend对象
     onnx_backend: RerankAsyncBackend = request.app.ctx.onnx_backend
+    # 依据问题对passages进行重排处理【计算匹配问题的评分，并按照评分高低进行排序】
     result_data = await onnx_backend.get_rerank_async(query, passages)
     # print("local rerank query:", query, flush=True)
     # print("local rerank passages number:", len(passages), flush=True)
@@ -46,6 +48,7 @@ async def rerank(request):
 
 @app.listener('before_server_start')
 async def setup_onnx_backend(app, loop):
+    # 在rerank服务启动前执行。给当前应用上下文中的onnx_backend属性赋值为RerankAsyncBackend对象【初始化参数有：rerank模型路径、gpu使用标识、rerank阈值】。
     app.ctx.onnx_backend = RerankAsyncBackend(model_path=LOCAL_RERANK_MODEL_PATH, use_cpu=not args.use_gpu,
                                               num_threads=LOCAL_RERANK_THREADS)
 
