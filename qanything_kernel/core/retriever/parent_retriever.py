@@ -28,6 +28,14 @@ class SelfParentRetriever(ParentDocumentRetriever):
     async def _aget_relevant_documents(
             self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun
     ) -> List[Document]:
+        """
+        从向量数据库查询文件
+        参数：
+            query：问题，用以查询与该问题相关的文档
+            run_manager：回调函数
+        返回：
+            文档列表
+        """
         """Asynchronously get documents relevant to a query.
         Args:
             query: String to find relevant documents for
@@ -43,17 +51,26 @@ class SelfParentRetriever(ParentDocumentRetriever):
                 query, **self.search_kwargs
             )
         else:
+            # 查询类型为：similarity，相似度查询
+            # 调用SelfMilvus对象的asimilarity_search_with_score方法【该方法在其爷爷类VectorStore中有定义，具体实现位于其父类Milvus中定义的similarity_search_with_score方法。具体逻辑：调用词向量服务【similarity_search_with_score方法中的self.embedding_func.embed_query(query)，也即YouDaoEmbeddings中的_get_embedding_sync方法】将问题字符转换为词向量，然后依据词向量及其他条件查询向量数据库】进行查询
             res = await self.vectorstore.asimilarity_search_with_score(
                 query, **self.search_kwargs
             )
+            # 提取查询结果中的得分和文档
             scores = [score for _, score in res]
             sub_docs = [doc for doc, _ in res]
 
-        # We do this to maintain the order of the ids that are returned
+        # We do this to maintain the order of the ids that are returned【保持返回结果中的id顺序】
+        # 初始化id列表
         ids = []
+        # 遍历文档列表
         for d in sub_docs:
             if self.id_key in d.metadata and d.metadata[self.id_key] not in ids:
+                # 当前文档的元数据中存在id_key且对应值【id】不在ids中时
+                # 将id追加到ids中
                 ids.append(d.metadata[self.id_key])
+        # 利用MySQL查询文档列表【依据id列表，调用MysqlStore类父类InMemoryStore的amget方法，实际调用MysqlStore类的mget方法，执行self.mysql_client.get_document_by_doc_id(doc_id)】
+        # 相当于将向量数据库查询结果与数据库存储的文档信息取交集，TODO 待续
         docs = await self.docstore.amget(ids)
         if scores:
             for i, doc in enumerate(docs):
@@ -177,7 +194,19 @@ class SelfParentRetriever(ParentDocumentRetriever):
             del doc.metadata['nos_key']
             del doc.metadata['faq_dict']
             del doc.metadata['page_id']
-        # 对embed_docs执行向量数据库存储【TODO 这里时长参数有什么用？】
+        # 对embed_docs执行向量数据库存储
+        # 【此处为调用SelfParentRetriever对象的vectorstore属性
+        # 【VectorStoreMilvusClient对象的local_vectorstore属性，SelfMilvus对象：SelfMilvus(
+        #             embedding_function=YouDaoEmbeddings(),
+        #             connection_args={"host": self.host, "port": self.port},
+        #             collection_name=MILVUS_COLLECTION_NAME,
+        #             partition_key_field="kb_id",
+        #             # primary_field="doc_id",
+        #             auto_id=True,
+        #             search_params={"params": {"ef": 64}}
+        #         )，见vectorstore.py文件】
+        #         的aadd_documents方法】
+        # 调用链路：SelfMilvus类继承Milvus类，Milvus类继承VectorStore类，VectorStore类中定义了aadd_documents方法，其aadd_documents方法调用其aadd_texts方法，该方法在SelfMilvus类中有重写实现。因此此处关键逻辑在SelfMilvus类的aadd_texts方法中
         res = await self.vectorstore.aadd_documents(embed_docs, time_record=time_record)
         # 打印日志，在向量数据库中的插入的数量
         insert_logger.info(f'vectorstore insert number: {len(res)}, {res[0]}')
@@ -223,6 +252,7 @@ class ParentRetriever:
             chunk_size=DEFAULT_CHILD_CHUNK_SIZE,
             chunk_overlap=int(DEFAULT_CHILD_CHUNK_SIZE / 4),
             length_function=num_tokens_embed)
+        # 此处依据ParentRetriever初始化函数中的向量存储client、MySQL数据库client、父子切分符列表生成了一个SelfParentRetriever对象，赋值给当前对象的retriever属性
         self.retriever = SelfParentRetriever(
             vectorstore=vectorstore_client.local_vectorstore,
             docstore=MysqlStore(mysql_client),
@@ -293,9 +323,9 @@ class ParentRetriever:
         # 设置知识库id列表遍历查询条件
         expr = f'kb_id in {partition_keys}'
         # self.retriever.set_search_kwargs("mmr", k=VECTOR_SEARCH_TOP_K, expr=expr)
-        # 设置查询条件【注意top_k参数的作用】和查询类型为相似度查询
+        # 设置查询条件【注意top_k参数的作用】和查询类型【SelfParentRetriever对象的_age_relevant_documents方法依据查询类型参数进行查询】为相似度查询
         self.retriever.set_search_kwargs("similarity", k=top_k, expr=expr)
-        # 依据问题和上述查询条件及查询类型执行查询
+        # 依据问题和上述查询条件及查询类型执行查询【调用SelfParentRetriever对象的_age_relevant_documents方法】
         query_docs = await self.retriever.aget_relevant_documents(query)
         # 遍历查询结果
         for doc in query_docs:

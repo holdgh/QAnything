@@ -152,6 +152,7 @@ class SelfMilvus(Milvus):
             raise exc
         return query_result
 
+    # 保存文档内容至向量数据库操作
     async def aadd_texts(
             self,
             texts: Iterable[str],
@@ -175,6 +176,7 @@ class SelfMilvus(Milvus):
             assert all(len(x.encode()) <= 65_535 for x in ids), "Each id should be a string less than 65535 bytes."
 
         # Assuming self.embedding_func has an async method embed_documents_async
+        # 对文档内容进行embedding操作，转化为词向量
         embedding_start = time.perf_counter()
         try:
             embeddings = await self.embedding_func.aembed_documents(texts)

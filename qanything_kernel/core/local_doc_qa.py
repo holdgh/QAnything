@@ -68,11 +68,17 @@ class LocalDocQA:
         return session
 
     def init_cfg(self, args=None):
+        # 依据embedding模型和onnx框架，将文本转词向量
         self.embeddings = YouDaoEmbeddings()
+        # 基于rerank模型和onnx框架，依据问题对文档内容列表进行计算得分和排序，也即重排
         self.rerank = YouDaoRerank()
+        # MySQL数据库操作
         self.milvus_summary = KnowledgeBaseManager()
+        # 向量数据库操作
         self.milvus_kb = VectorStoreMilvusClient()
+        # es搜索相关
         self.es_client = StoreElasticSearchClient()
+        # 文档插入与检索操作，由其初始化可知综合了向量数据库，MySQL数据库和es
         self.retriever = ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)
 
     @get_time
