@@ -460,6 +460,9 @@ def get_time_range(time_start=None, time_end=None, default_days=30):
 
 
 def deduplicate_documents(source_docs):
+    """
+    依据文档内容利用集合去重
+    """
     unique_docs = set()
     deduplicated_docs = []
     for doc in source_docs:

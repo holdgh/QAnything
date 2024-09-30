@@ -70,17 +70,26 @@ class SelfParentRetriever(ParentDocumentRetriever):
                 # 将id追加到ids中
                 ids.append(d.metadata[self.id_key])
         # 利用MySQL查询文档列表【依据id列表，调用MysqlStore类父类InMemoryStore的amget方法，实际调用MysqlStore类的mget方法，执行self.mysql_client.get_document_by_doc_id(doc_id)】
-        # 相当于将向量数据库查询结果与数据库存储的文档信息取交集，TODO 待续
+        # 注意mget方法逻辑：逐个id进行MySQL数据库查询，结果为空，则对应添加None；结果非空，则处理文档元数据后，将查询结果收集到总体结果列表中
         docs = await self.docstore.amget(ids)
         if scores:
+            # 向量数据库查询结果中的得分列表非空时
+            # 遍历数据库文档查询结果
             for i, doc in enumerate(docs):
                 if doc is not None:
+                    # 当前文档非空时
+                    # 给文档元数据添加得分信息
+                    # 【见上述amget方法注释，依据向量数据库查询结果ids去MySQL数据库查询文档信息，查不到的置为None，保持了docs和scores二者的位置一致性，所以这里可以直接按照docs中的索引去scores中取得分赋值给docs中对应索引的文档元数据】
                     doc.metadata['score'] = scores[i]
+        # 过滤掉docs中为None的元素
         res = [d for d in docs if d is not None]
+        # 获取向量数据库文档查询结果的内容长度列表
         sub_docs_lengths = [len(d.page_content) for d in sub_docs]
+        # 获取MySQL数据库文档查询结果的内容长度列表
         res_lengths = [len(d.page_content) for d in res]
         debug_logger.info(
             f"Got child docs: {len(sub_docs)}, {sub_docs_lengths} and Parent docs: {len(res)}, {res_lengths}")
+        # 返回MySQL数据库中的非空文档列表
         return res
 
     async def aadd_documents(
@@ -98,6 +107,7 @@ class SelfParentRetriever(ParentDocumentRetriever):
         # insert_logger.info(f"Inserting {len(documents)} complete documents, single_parent: {single_parent}")
         # 切分起始时间
         split_start = time.perf_counter()
+        # =================父切分-start=================
         if self.parent_splitter is not None and not single_parent:
             # 父切分符非空且非单亲时【对有表格且文档内容token数量超过父切分尺寸的文档进行切分处理【依据换行符和中文标点符号】，然后将所有文档再收集到documents中】
             # documents = self.parent_splitter.split_documents(documents)
@@ -127,7 +137,8 @@ class SelfParentRetriever(ParentDocumentRetriever):
             documents = split_documents
         # 打印父切分处理情况：正在插入**个父切分文档
         insert_logger.info(f"Inserting {len(documents)} parent documents")
-
+        # =================父切分-end==================
+        # ===============文档id处理-start==============
         if ids is None:
             # ids为none时，根据insert_documents方法中ids的定义可知【当single_parent为False时，ids为None；当single_parent为True时，ids为文档id列表】，此时single_parent为False【TODO 文档列表来自于多个文件？】
             # 提取第一个文档元数据中的文件id
@@ -149,8 +160,12 @@ class SelfParentRetriever(ParentDocumentRetriever):
                 )
             # 将ids直接赋值给doc_ids
             doc_ids = ids
+        # ===============文档id处理-end==============
+        # =============子切分-start==============
         # 初始化
+        # 收集子切分文档信息【多个文档对应一个文档id】，用以保存至向量数据库和es存储
         docs = []
+        # 收集文档id和文档信息【一个文档对应一个文档id】，用以保存至MySQL数据库
         full_docs = []
         # 遍历枚举文档列表，获取索引和相应索引的文档
         for i, doc in enumerate(documents):
@@ -183,6 +198,7 @@ class SelfParentRetriever(ParentDocumentRetriever):
         insert_logger.info(f"Inserting {len(docs)} child documents, metadata: {docs[0].metadata}, page_content: {docs[0].page_content[:100]}...")
         # 记录切分时长
         time_record = {"split_time": round(time.perf_counter() - split_start, 2)}
+        # ===============子切分-end===============
         # 执行拷贝，将子切分文档列表拷贝【赋值操作相当于不同的变量指向同一个数据，变量值和地址都是数据的值和地址，通过一个变量对数据进行操作，另一个变量的数据也同时变化。深拷贝相当于将一个变量的数据拷贝一份，放在一个新的地址上，这样两个变量的数据相同，但是地址不同，可以避免相互间的影响】给embed_docs
         embed_docs = copy.deepcopy(docs)
         # 删除一些metadata信息

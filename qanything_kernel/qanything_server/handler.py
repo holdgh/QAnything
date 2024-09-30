@@ -674,6 +674,7 @@ async def local_doc_chat(req: request):
     # time.perf_counter()返回性能计数器的值（以小数秒为单位）作为浮点数，即具有最高可用分辨率的时钟，以测量短持续时间。 它确实包括睡眠期间经过的时间，并且是系统范围的。
     preprocess_start = time.perf_counter()
     local_doc_qa: LocalDocQA = req.app.ctx.local_doc_qa
+    # =============检验用户、机器人、知识库参数的合法性-start===============
     # 获取入参中的用户信息
     user_id = safe_get(req, 'user_id')
     user_info = safe_get(req, 'user_info', "1234")
@@ -713,6 +714,8 @@ async def local_doc_chat(req: request):
     if len(kb_ids) > 20:
         # 如果知识库id的个数大于20个，则返回提示信息【知识库id应不超过20个】
         return sanic_json({"code": 2005, "msg": "fail, kb_ids length should less than or equal to 20"})
+    # =============检验用户、机器人、知识库参数的合法性-end===============
+    # =============获取问题、重排标识、流式回答标识、历史对话、仅检索内容标识、联网搜索标识、大模型路由及超参数-start===============
     # 处理知识库id【主要针对入参中的知识库id？】
     kb_ids = [correct_kb_id(kb_id) for kb_id in kb_ids]
     # 获取入参中的问题
@@ -813,8 +816,10 @@ async def local_doc_chat(req: request):
     debug_logger.info("temperature: %s", temperature)
     debug_logger.info("hybrid_search: %s", hybrid_search)
     debug_logger.info("web_chunk_size: %s", web_chunk_size)
+    # =============获取问题、重排标识、流式回答标识、历史对话、仅检索内容标识、联网搜索标识、大模型路由及超参数-end===============
     # 处理时间字典，用以记录各个阶段的处理时间
     time_record = {}
+    # =================收集存在的问答知识库id-start==================
     if kb_ids:
         # 知识库id列表非空时，校验知识库id是否存在，并返回不存在的知识库id列表
         not_exist_kb_ids = local_doc_qa.milvus_summary.check_kb_exist(user_id, kb_ids)
@@ -831,7 +836,8 @@ async def local_doc_chat(req: request):
         # 将存在的问答知识库id列表和知识库id列表拼接起来，赋值给kb_ids
         # 列表间的拼接功能a+=b,相当于a=a+b,比如a=[1,2,3],b=[4,5,6]，那么执行后a=[1,2,3,4,5,6]
         kb_ids += exist_faq_kb_ids
-
+    # =================收集存在的问答知识库id-end==================
+    # ==========依据知识库id列表获取有效的文件信息，存在有效文件信息则更新知识库最新问答时间-start============
     file_infos = []
     # 遍历知识库列表收集对应的文件信息
     for kb_id in kb_ids:
@@ -851,11 +857,12 @@ async def local_doc_chat(req: request):
     for kb_id in kb_ids:
         # 更新相应知识库的最新问答时间
         local_doc_qa.milvus_summary.update_knowledge_base_latest_qa_time(kb_id, qa_timestamp)
+    # ==========依据知识库id列表获取有效的文件信息，存在有效文件信息则更新知识库最新问答时间-end============
     debug_logger.info("streaming: %s", streaming)
     if streaming:
         # 采取流式回答，边回答边返回
         debug_logger.info("start generate answer")
-
+        # ===========流式回答，定义一个协程函数，利用ResponseStream流式输出-start==========
         async def generate_answer(response):
             """
             异步生成答案
@@ -944,9 +951,11 @@ async def local_doc_chat(req: request):
                 await asyncio.sleep(0.001)
 
         response_stream = ResponseStream(generate_answer, content_type='text/event-stream')
+        # ===========流式回答，定义一个协程函数，利用ResponseStream流式输出-end==========
         return response_stream
 
     else:
+        # ===========非流式回答-start==========
         # 非流式回答，得到完整答案，然后返回
         async for resp, history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                            max_token=max_token,
@@ -983,6 +992,7 @@ async def local_doc_chat(req: request):
         local_doc_qa.milvus_summary.add_qalog(**chat_data)
         qa_logger.info("chat_data: %s", chat_data)
         debug_logger.info("response: %s", chat_data['result'])
+        # ===========非流式回答-end==========
         return sanic_json({"code": 200, "msg": "success no stream chat", "question": question,
                            "response": resp["result"], "model": model,
                            "history": history, "condense_question": resp['condense_question'],

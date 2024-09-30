@@ -455,6 +455,7 @@ class LocalDocQA:
         """
         # 获取openai大模型对象：内含指定模型的编码器、openai请求客户端
         custom_llm = OpenAILLM(model, max_token, api_base, api_key, api_context_length, top_p, temperature)
+        # =============将对话历史转化为格式化的对话历史【以“人工问题，ai答案”的顺序】-start==============
         if chat_history is None:
             # 如果对话历史参数为空，则设置其默认值为空列表
             chat_history = []
@@ -476,6 +477,8 @@ class LocalDocQA:
                     AIMessage(content=msg[1]),
                 ]
             debug_logger.info(f"formatted_chat_history: {formatted_chat_history}")
+            # =============将对话历史转化为格式化的对话历史【以“人工问题，ai答案”的顺序】-end==============
+            # ==================利用RewriteQuestionChain对象的提示词模板，结合格式化的对话历史和当前问题进行问题压缩-start=================
             # 获取重构问题链对象【用以根据历史对话记录和当前问题，生成一个可以独立理解【不需要依赖聊天记录就可以理解的，语义完整的】的新问题】
             """
             如果当前问题已经语义完整且独立【和历史对话记录没有关系】，则直接返回当前问题
@@ -533,7 +536,8 @@ class LocalDocQA:
             if clear_string(condense_question) != clear_string(query):
                 # 如果压缩【重构】问题和当前问题不相似【说明重构起了作用，也即历史对话记录起了作用】，则将压缩【重构】问题赋值给retrieval_query
                 retrieval_query = condense_question
-
+        # ==================利用RewriteQuestionChain对象的提示词模板，结合格式化的对话历史和当前问题进行问题压缩-end=================
+        # =========执行向量数据库查询、MySQL数据库查询、es查询，获取与问题相关的源文档列表-start========
         if kb_ids:
             # 如果知识库id列表非空，则依据知识库id列表、retrieval_query【检索答案用到的问题，最终问题】、time_record【内含：压缩【重构】问题使用的token数量、完整提示词和压缩【重构】问题一共使用的token数量】、retriever【ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)，在init_cfg方法中有定义】以及一些超参数获取源文档【向量检索、【混合检索标识为True时】es检索获取文档列表，过滤删除的文件，设置文档得分】
             source_documents = await self.get_source_documents(retrieval_query, retriever, kb_ids, time_record,
@@ -541,7 +545,8 @@ class LocalDocQA:
         else:
             # 如果知识库id列表为空，则设置源文档为空列表
             source_documents = []
-
+        # =========执行向量数据库查询、MySQL数据库查询、es查询，获取与问题相关的源文档列表-end========
+        # ===========联网搜索处理-start============
         if need_web_search:
             # 如果开启联网搜索
             t1 = time.perf_counter()
@@ -557,6 +562,8 @@ class LocalDocQA:
             time_record['web_search'] = round(t2 - t1, 2)
             # 将联网搜索结果追加到源文档列表中
             source_documents += web_search_results
+        # ==========联网搜索处理-end===========
+        # ============对源文档列表进行去重、rerank处理、得分过滤处理-start=============
         # 对源文档列表进行去重
         source_documents = deduplicate_documents(source_documents)
         if rerank and len(source_documents) > 1 and num_tokens_rerank(query) <= 300:
@@ -587,6 +594,8 @@ class LocalDocQA:
         if high_score_faq_documents:
             # 如果high_score_faq_documents非空，则赋值给源文档列表【换言之，如果high_score_faq_documents为空，则上述过滤像没有发生一样】
             source_documents = high_score_faq_documents
+        # ============对源文档列表进行去重、rerank处理、得分过滤处理-end=============
+        # ==============遍历源文档列表，进行问答文档的问题与当前问题之间的相似度匹配，匹配成功，则返回-start===============
         # FAQ完全匹配处理逻辑
         for doc in source_documents:
             # 对源文档列表中的文档逐个匹配问题
@@ -623,6 +632,8 @@ class LocalDocQA:
                     yield response, history
                 # 退出函数
                 return
+        # ==============遍历源文档列表，进行问答文档的问题与当前问题之间的相似度匹配，匹配成功，则返回-end===============
+        # =================利用top_k参数选择得分前top_k个源文档组成新的源文档列表，依据该源文档列表是否为空选择提示词模板-start================
         # 在源文档列表中没有找到答案，则进行以下处理
         # es检索+milvus检索结果最多可能是2k
         # 取前30个源文档组成新的源文档列表
@@ -664,7 +675,7 @@ class LocalDocQA:
                 # prompt_template = SIMPLE_PROMPT_TEMPLATE.format(today=today, now=now, custom_prompt=simple_custom_prompt)
                 prompt_template = SIMPLE_PROMPT_TEMPLATE.replace("{{today}}", today).replace("{{now}}", now).replace(
                     "{{custom_prompt}}", simple_custom_prompt)
-
+        # =================利用top_k参数选择得分前top_k个源文档组成新的源文档列表，依据该源文档列表是否为空选择提示词模板-end================
         # source_documents_for_show = copy.deepcopy(source_documents)
         # total_images_number = 0
         # for doc in source_documents_for_show:
@@ -672,6 +683,7 @@ class LocalDocQA:
         #         total_images_number += len(doc.metadata['images'])
         #     doc.page_content = replace_image_references(doc.page_content, doc.metadata['file_id'])
         # debug_logger.info(f"total_images_number: {total_images_number}")
+        # ===============对源文档列表进行预处理【满足大模型token数据限制，聚合处理，合并处理】-start==============
         # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到新的源文档列表【满足大模型的限制token数量要求。1、非联网搜索且聚合结果非空时为聚合处理结果；2、聚合异常时，为检索文档列表；3、聚合结果为空时，为检索文档列表在文件id唯一意义下按照文档id从小到大排序处理后的文档列表】和检索文档列表【满足大模型的限制token数量要求，没有聚合处理，也没有排序】
         source_documents, retrieval_documents = await self.prepare_source_documents(query, custom_llm, source_documents,
                                                                                     chat_history,
@@ -691,11 +703,12 @@ class LocalDocQA:
         t2 = time.perf_counter()
         # 计算文档预处理耗时，并收集耗时数据
         time_record['reprocess'] = round(t2 - t1, 2)
+        # ===============对源文档列表进行预处理【满足大模型token数据限制，聚合处理，合并处理】-end==============
         if only_need_search_results:
             # 如果只需要文档检索结果，则直接返回
             yield source_documents, None
             return
-
+        # ==============将问题、源文档列表结合提示词模板生成提示词，利用提示词结合对话历史调用大模型生成答案-start==============
         t1 = time.perf_counter()
         has_first_return = False
         # 初始化精确回答
@@ -786,6 +799,7 @@ class LocalDocQA:
                     if len(show_images) > 1:
                         # 图文列表超过1个图文时，在响应中设置图文信息
                         response['show_images'] = show_images
+            # ==============将问题、源文档列表结合提示词模板生成提示词，利用提示词结合对话历史调用大模型生成答案-end==============
             yield response, history
 
     def get_completed_document(self, file_id, limit=None):
