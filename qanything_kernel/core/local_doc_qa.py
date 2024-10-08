@@ -235,27 +235,38 @@ class LocalDocQA:
 
     def generate_prompt(self, query, source_docs, prompt_template):
         if source_docs:
+            # 源文档列表非空时，将源文档列表整合为提示词中的上下文context并将其放入提示词模板中的context处，同时将问题query放入提示词模板中的question处
             context = ''
+            # 初始化待处理文件id列表
             not_repeated_file_ids = []
             for doc in source_docs:
+                # 去除图片
                 doc_valid_content = re.sub(r'!\[figure]\(.*?\)', '', doc.page_content)  # 生成prompt时去掉图片
                 file_id = doc.metadata['file_id']
                 if file_id not in not_repeated_file_ids:
+                    # 新的文件id
                     if len(not_repeated_file_ids) != 0:
+                        # 还有其他文件未拼接时，追加一个</reference>标签，表示前一个文件的引用完毕，而且还有后续文件引用要处理【for循环结束时，紧接着给上下文拼接了一个</reference>标签】
                         context += '</reference>\n'
+                    # 将当前文件id收集到待处理文件id列表中
                     not_repeated_file_ids.append(file_id)
+                    # 文档元数据中有无headers的上下文处理方式
                     if 'headers' in doc.metadata:
+                        # 有headers时，将headers放入标签reference中
                         headers = f"headers={doc.metadata['headers']}"
                         context += f"<reference {headers}>[{len(not_repeated_file_ids)}]" + '\n' + doc_valid_content + '\n'
                     else:
+                        # 无headers时的处理
                         context += f"<reference>[{len(not_repeated_file_ids)}]" + '\n' + doc_valid_content + '\n'
                 else:
+                    # 同一文件，将其内容直接拼接到上下文中
                     context += doc_valid_content + '\n'
             context += '</reference>\n'
 
             # prompt = prompt_template.format(context=context).replace("{{question}}", query)
             prompt = prompt_template.replace("{{context}}", context).replace("{{question}}", query)
         else:
+            # 源文档列表为空时，直接拼接问题即可
             prompt = prompt_template.replace("{{question}}", query)
         return prompt
 
@@ -564,10 +575,10 @@ class LocalDocQA:
             source_documents += web_search_results
         # ==========联网搜索处理-end===========
         # ============对源文档列表进行去重、rerank处理、得分过滤处理-start=============
-        # 对源文档列表进行去重
+        # 对源文档列表进行去重【依据文档内容利用集合去重】
         source_documents = deduplicate_documents(source_documents)
         if rerank and len(source_documents) > 1 and num_tokens_rerank(query) <= 300:
-            # 如果进行重排，且源文档列表非空，且当前问题重排后的token数量不超过300，则进行以下处理
+            # 如果进行重排，且源文档列表非空，且当前问题rerank处理的token数量不超过300，则进行以下处理
             try:
                 t1 = time.perf_counter()
                 debug_logger.info(f"use rerank, rerank docs num: {len(source_documents)}")
@@ -684,7 +695,7 @@ class LocalDocQA:
         #     doc.page_content = replace_image_references(doc.page_content, doc.metadata['file_id'])
         # debug_logger.info(f"total_images_number: {total_images_number}")
         # ===============对源文档列表进行预处理【满足大模型token数据限制，聚合处理，合并处理】-start==============
-        # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到新的源文档列表【满足大模型的限制token数量要求。1、非联网搜索且聚合结果非空时为聚合处理结果；2、聚合异常时，为检索文档列表；3、聚合结果为空时，为检索文档列表在文件id唯一意义下按照文档id从小到大排序处理后的文档列表】和检索文档列表【满足大模型的限制token数量要求，没有聚合处理，也没有排序】
+        # 依据当前问题、openAI大模型、源文档列表、对话历史、提示词、是否联网检索标识，对源文档列表进行预处理，得到新的源文档列表【满足大模型的限制token数量要求。1、非联网搜索且聚合结果非空时为聚合处理结果；2、聚合异常时，为检索文档列表；3、聚合结果为空时，为检索文档列表在文件id唯一意义下按照文档id从小到大排序处理后的文档列表】和检索文档列表【满足大模型的限制token数量要求，没有聚合处理，也没有排序。仅用于返回结果显示。】
         source_documents, retrieval_documents = await self.prepare_source_documents(query, custom_llm, source_documents,
                                                                                     chat_history,
                                                                                     prompt_template,
@@ -943,7 +954,7 @@ class LocalDocQA:
                 return new_docs
             # 获取first_file_dict['doc_ids']的最小值和最大值
             doc_limit = [min(first_file_dict['doc_ids']), max(first_file_dict['doc_ids'])]
-            # 依据第一个文件id获取经排序【先根据文档索引限制参数doc_limit对文件id查询文档列表结果进行切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
+            # 依据第一个文件id获取经排序【先根据文档索引限制参数doc_limit对怕【依据文件id查询数据库得到的文档列表结果】进行切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
             first_completed_doc_limit, first_completed_doc_limit_with_figure = self.get_completed_document(
                 first_file_dict['file_id'], doc_limit)
             # 对不含图片的完整文档设置得分
