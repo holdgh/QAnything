@@ -39,6 +39,16 @@ class RerankBackend(ABC):
                          query: str,
                          passages: List[str],
                          ):
+        """
+        逻辑如下：
+        先将query进行分词编码【分词，分词索引编码】，计算其分词编码长度
+        再基于最大长度减去query的分词编码长度，得出一个段落的最大允许长度max_passage_inputs_length【不得小于10】
+        取默认重叠长度和max_passage_inputs_length的最小值作为后续要使用的overlap_tokens
+        枚举遍历段落列表，进行下述处理：
+            对当前段落进行分词编码【分词，分词索引编码】，计算其分词编码长度，做以下判断处理：
+                若其分词编码长度不超过max_passage_inputs_length，直接拼接query分词编码和当前段落的分词编码；
+                若其分词编码长度超过max_passage_inputs_length，则对当前段落进行逐段切分【每段长度不超过max_passage_inputs_length，且段与段之间的分词编码重叠长度为overlap_tokens】，逐段拼接query分词编码；
+        """
         query_inputs = self._tokenizer.encode_plus(query, truncation=False, padding=False)
         max_passage_inputs_length = self.max_length - len(query_inputs['input_ids']) - 1
         assert max_passage_inputs_length > 10
@@ -57,6 +67,7 @@ class RerankBackend(ABC):
                     continue
                 qp_merge_inputs = self.merge_inputs(query_inputs, passage_inputs)
                 merge_inputs.append(qp_merge_inputs)
+                # 一个段落对应一个段落索引
                 merge_inputs_idxs.append(pid)
             else:
                 start_id = 0
@@ -67,6 +78,7 @@ class RerankBackend(ABC):
 
                     qp_merge_inputs = self.merge_inputs(query_inputs, sub_passage_inputs)
                     merge_inputs.append(qp_merge_inputs)
+                    # 多段对应一个父段落索引
                     merge_inputs_idxs.append(pid)
 
         return merge_inputs, merge_inputs_idxs
