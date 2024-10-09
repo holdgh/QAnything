@@ -56,7 +56,7 @@ class SelfParentRetriever(ParentDocumentRetriever):
             res = await self.vectorstore.asimilarity_search_with_score(
                 query, **self.search_kwargs
             )
-            # 提取查询结果中的得分和文档
+            # 提取查询结果中的得分【这里的得分是怎么来的？】和文档
             scores = [score for _, score in res]
             sub_docs = [doc for doc, _ in res]
 
@@ -227,6 +227,19 @@ class SelfParentRetriever(ParentDocumentRetriever):
         # 打印日志，在向量数据库中的插入的数量
         insert_logger.info(f'vectorstore insert number: {len(res)}, {res[0]}')
         # es存储操作
+        """
+        【es_client.es_store，es_client=StoreElasticSearchClient()】
+        在类StoreElasticSearchClient的初始化方法中，存在下述定义：
+        self.es_store = ElasticsearchStore(
+            es_url=ES_URL,
+            index_name=ES_INDEX_NAME,
+            es_user=ES_USER,
+            es_password=ES_PASSWORD,
+            strategy=ElasticsearchStore.BM25RetrievalStrategy()
+        )
+        调用链路：es_store.aadd_documents【实际是VectorStore的aadd_documents方法】--》VectorStore的aadd_texts方法--》VectorStore的add_texts抽象方法--》在ElasticsearchStore中实现了add_texts方法【仅对入参texts做了列表转化】--》VectorStore的add_texts方法
+        由此可知，此处调用外部工具，实际调用的是ElasticsearchStore中定义的add_texts方法，设置es存储连接参数，执行es存储
+        """
         if es_store is not None:
             # es存储客户端不为none时，也即存在时
             try:
@@ -234,7 +247,7 @@ class SelfParentRetriever(ParentDocumentRetriever):
                 es_start = time.perf_counter()
                 # docs_ids中的doc_id是file_id + '_' + i
                 docs_ids = [doc.metadata['file_id'] + '_' + str(i) for i, doc in enumerate(embed_docs)]
-                # 对embed_docs执行es存储
+                # 对embed_docs执行es存储【没有调用embedding服务】
                 es_res = await es_store.aadd_documents(embed_docs, ids=docs_ids)
                 # 记录es存储时长
                 time_record['es_insert_time'] = round(time.perf_counter() - es_start, 2)
@@ -293,7 +306,8 @@ class ParentRetriever:
         if parent_chunk_size != self.parent_chunk_size:
             # 切片尺寸不等，以参数中的切片尺寸为准
             self.parent_chunk_size = parent_chunk_size
-            # 父切分符号【换行符和中文标点符号】
+            # 对于切分工具，作者写了一个chinese_text_splitter工具类，但是这里没有用到
+            # 父切分工具【将换行符和中文标点符号作为分隔符列表，递归切分文档，切分所得文档内容尺寸不超过parent_chunk_size】
             parent_splitter = RecursiveCharacterTextSplitter(
                 separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
                 chunk_size=parent_chunk_size,
@@ -303,7 +317,7 @@ class ParentRetriever:
                 length_function=num_tokens_embed)
             # 设置子切分尺寸，取默认子切分尺寸和当前父切分尺寸一半的最小值
             child_chunk_size = min(DEFAULT_CHILD_CHUNK_SIZE, int(parent_chunk_size / 2))
-            # 子切分符号【换行符和中文标点符号】
+            # 子切分工具【将换行符和中文标点符号作为分隔符列表，递归切分文档，切分所得文档内容尺寸不超过child_chunk_size】
             child_splitter = RecursiveCharacterTextSplitter(
                 separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
                 chunk_size=child_chunk_size,
@@ -342,6 +356,7 @@ class ParentRetriever:
         # 设置查询条件【注意top_k参数的作用】和查询类型【SelfParentRetriever对象的_age_relevant_documents方法依据查询类型参数进行查询】为相似度查询
         self.retriever.set_search_kwargs("similarity", k=top_k, expr=expr)
         # 依据问题和上述查询条件及查询类型执行查询【调用SelfParentRetriever对象的_age_relevant_documents方法】
+        # 逻辑：将问题转化为词向量，进行向量数据库查询得到得分列表和文档id列表，然后利用文档id列表进行MySQL数据库查询，并将向量查询得到的得分追加到MySQL数据库查询结果中，返回MySQL数据库查询结果
         query_docs = await self.retriever.aget_relevant_documents(query)
         # 遍历查询结果
         for doc in query_docs:
@@ -359,7 +374,20 @@ class ParentRetriever:
             # for partition_key in partition_keys:
             # 设置es检索参数：知识库id列表
             filter = [{"terms": {"metadata.kb_id.keyword": partition_keys}}]
-            # 依据问题、超参数top_k和知识库id列表条件，执行es相似度检索
+            # 依据问题、超参数top_k和知识库id列表条件，执行es相似度检索【这里没有进行词向量的转化，直接根据query进行查询】
+            """
+            【es_client.es_store，es_client=StoreElasticSearchClient()】
+            在类StoreElasticSearchClient的初始化方法中，存在下述定义：
+            self.es_store = ElasticsearchStore(
+                es_url=ES_URL,
+                index_name=ES_INDEX_NAME,
+                es_user=ES_USER,
+                es_password=ES_PASSWORD,
+                strategy=ElasticsearchStore.BM25RetrievalStrategy()
+            )
+            调用链路：es_store.asimilarity_search【实际是VectorStore的asimilarity_search方法】--》VectorStore的similarity_search抽象方法--》在ElasticsearchStore中实现了similarity_search方法
+            由此可知，此处调用外部工具，直接根据query结合top_k和filter参数进行es检索
+            """
             es_sub_docs = await self.es_store.asimilarity_search(query, k=top_k, filter=filter)
             es_ids = []
             # 获取向量数据库检索【milvus检索】的文档id列表

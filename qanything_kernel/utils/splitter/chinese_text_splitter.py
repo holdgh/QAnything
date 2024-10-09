@@ -7,36 +7,45 @@ import copy
 from typing import List
 from qanything_kernel.utils.custom_log import insert_logger
 from qanything_kernel.configs.model_config import SENTENCE_SIZE
+"""
+异步文件处理的父子切分算法逻辑
+"""
 
 
 class ChineseTextSplitter(CharacterTextSplitter):
     def __init__(self, pdf: bool = False, sentence_size: int = SENTENCE_SIZE, event: threading.Event = None, **kwargs):
         super().__init__(**kwargs)
         self.pdf = pdf
+        # 默认值为100
         self.sentence_size = sentence_size
         self.event = event
-    
+
     def create_documents(
-        self, texts: List[str], metadatas: Optional[List[dict]] = None
+            self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:
         """Create documents from a list of texts."""
         _metadatas = metadatas or [{}] * len(texts)
         documents = []
         for i, text in enumerate(texts):
             if self.event.is_set():
-                insert_logger.warning('Event is set!') 
+                insert_logger.warning('Event is set!')
                 break
             index = -1
+            # 遍历当前text的切分结果列表
             for chunk in self.split_text(text):
+                # 深拷贝一份当前text的文档元数据
                 metadata = copy.deepcopy(_metadatas[i])
                 if self._add_start_index:
+                    # 添加起始索引标识默认false
                     index = text.find(chunk, index + 1)
                     metadata["start_index"] = index
+                # 利用文档元数据和当前text的当前切分结果，构造文档对象
                 new_doc = Document(page_content=chunk, metadata=metadata)
+                # 收集文档对象
                 documents.append(new_doc)
         return documents
 
-    def split_text(self, text: str) -> List[str]:   ##此处需要进一步优化逻辑
+    def split_text(self, text: str) -> List[str]:  ##此处需要进一步优化逻辑
         if self.pdf:
             text = re.sub(r"\n{3,}", r"\n", text)
             text = re.sub('\s', " ", text)

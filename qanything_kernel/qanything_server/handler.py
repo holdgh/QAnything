@@ -487,7 +487,7 @@ async def list_docs(req: request):
         "data": {
             'total_page': total_pages,  # 总页数
             "total": total_count,  # 总文件数
-            "status_count": status_count,  # 各状态的文件数
+            "status_count": status_count,  # 各状态的文件数【一个字典，key状态标识，value为对应该状态的数量】
             "details": current_page_data,  # 当前页码下的文件目录
             "page_id": page_id,  # 当前页码,
             "page_limit": page_limit  # 每页显示的文件数
