@@ -13,3 +13,6 @@ nohup python3 -u qanything_kernel/qanything_server/sanic_api.py --host $USER_IP 
 PID6=$!
 
 因此当前目录是程序的入口
+rerank模型【1G】下载方式：git clone https://www.modelscope.cn/netease-youdao/bce-reranker-base_v1.git
+embedding模型【1G】下载方式：git clone https://www.modelscope.cn/netease-youdao/bce-embedding-base_v1.git
+大语言模型【10G】下载方式：git clone https://www.modelscope.cn/netease-youdao/Qwen-7B-QAnything.git

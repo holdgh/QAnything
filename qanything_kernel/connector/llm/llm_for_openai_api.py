@@ -152,7 +152,7 @@ class OpenAILLM:
         # debug_logger.info(f"prompt: {prompt}")
         debug_logger.info(f"prompt tokens: {self.num_tokens_from_messages([{'content': prompt}])}")
         # debug_logger.info(f"streaming: {streaming}")
-
+        # 根据对话历史列表和提示词【包含了当前问题和上下文【检索文档信息】】构造大模型调用入参
         messages = []
         for pair in history[:-1]:
             question, answer = pair

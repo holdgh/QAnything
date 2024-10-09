@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 # 测试配置
 TEST_DURATION = 10  # 测试持续时间（秒）
-BATCH_SIZES = [1, 2, 4, 8, 16]
-NUM_THREADS = [1, 2, 4]
-MODEL_PATH = "/root/models/linux_onnx/rerank_model_configs_v0.0.1/rerank.onnx"  # 请替换为实际的模型路径
-LOCAL_RERANK_PATH = "/root/models/linux_onnx/rerank_model_configs_v0.0.1"  # 请替换为实际的分词器路径
+BATCH_SIZES = [1, 2]
+NUM_THREADS = [1, 2]
+# 注意转义字符r，要用双斜杠
+MODEL_PATH = "D:\project\AI\QAnything\qanything_kernel\dependent_server\\rerank_server\\rerank_model_configs_v0.0.1\\rerank.onnx"  # 请替换为实际的模型路径
+LOCAL_RERANK_PATH = "D:\project\AI\QAnything\qanything_kernel\dependent_server\\rerank_server\\rerank_model_configs_v0.0.1"  # 请替换为实际的分词器路径
 LOCAL_RERANK_MAX_LENGTH = 512
 LOCAL_RERANK_BATCH = 4
 LOCAL_RERANK_THREADS = 1
@@ -51,12 +52,14 @@ class RerankAsyncBackend:
         asyncio.create_task(self.process_queue())
 
     def inference(self, batch):
+        """重排操作"""
         logger.info(f"rerank shape: {batch['attention_mask'].shape}")
         # 准备输入数据
         inputs = {self.session.get_inputs()[i].name: batch[name]
                   for i, name in enumerate(['input_ids', 'attention_mask', 'token_type_ids'])
                   if name in batch}
-
+        # 处理异常：INVALID_ARGUMENT : Unexpected input data type. Actual: (tensor(int32)) , expected: (tensor(int64))')
+        inputs = {k: np.array(v, dtype=np.int64) for k, v in inputs.items()}
         # 执行推理 输出为logits
         result = self.session.run(None, inputs)  # None表示获取所有输出
         # debug_logger.info(f"rerank result: {result}")
@@ -108,6 +111,7 @@ class RerankAsyncBackend:
         return merge_inputs, merge_inputs_idxs
 
     async def get_rerank_async(self, query: str, passages: List[str]):
+        # 这里的query和passages的维数与tot_batches的维数不一定对应，详情见tokenize_preproc
         tot_batches, merge_inputs_idxs_sort = self.tokenize_preproc(query, passages)
 
         futures = []
@@ -115,9 +119,11 @@ class RerankAsyncBackend:
         for i in range(0, len(tot_batches), mini_batch):
             future = asyncio.Future()
             futures.append(future)
+            # 将待处理的文本和任务放入队列
             await self.queue.put((tot_batches[i:i + mini_batch], future))
 
         results = await asyncio.gather(*futures)
+        # 得分结果是和tot_batches中input_ids的维数一致的，也即一对query和段落对应一个得分结果
         tot_scores = [score for batch_scores in results for score in batch_scores]
 
         merge_tot_scores = [0 for _ in range(len(passages))]
@@ -133,6 +139,9 @@ class RerankAsyncBackend:
 
             try:
                 while len(batch_items) < self.batch_size:
+                    if not self.queue:
+                        break
+                    # 从队列中取出任务
                     batch, future = await asyncio.wait_for(self.queue.get(), timeout=0.01)
                     batch_items.extend(batch)
                     futures.append((future, len(batch)))
@@ -148,6 +157,7 @@ class RerankAsyncBackend:
                     pad_to_multiple_of=None,
                     return_tensors=self.return_tensors
                 )
+                # 利用线程池处理当前任务
                 result = await loop.run_in_executor(self.executor, self.inference, input_batch)
 
                 start = 0
@@ -193,8 +203,8 @@ async def client(backend, query: str, passages: List[str], request_count):
 
 async def run_test(batch_size, num_threads):
     backend = RerankAsyncBackend(MODEL_PATH, use_cpu=True, num_threads=num_threads, batch_size=batch_size)
-    test_queries = generate_test_data(num_samples=100, max_length=50)  # 生成查询
-    test_passages = generate_test_data(num_samples=1000, max_length=1024)  # 生成段落
+    test_queries = generate_test_data(num_samples=100, max_length=50)  # 生成100个查询
+    test_passages = generate_test_data(num_samples=1000, max_length=1024)  # 生成1000个段落
 
     start_time = time.time()
     end_time = start_time + TEST_DURATION
@@ -209,8 +219,10 @@ async def run_test(batch_size, num_threads):
     while time.time() < end_time:
         tasks = []
         for _ in range(10):  # 模拟10个并发客户端
+            # 随机从100个查询中选择一个
             query = random.choice(test_queries)
-            passages = random.sample(test_passages, random.randint(5, 20))  # 每次随机选择5-20个段落
+            # passages = random.sample(test_passages, random.randint(5, 20))  # 每次随机选择5-20个段落
+            passages = random.sample(test_passages, random.randint(1, 2))  # 每次随机选择1-2个段落，提高实验效率
             tasks.append(asyncio.create_task(client(backend, query, passages, 1)))
             total_passages += len(passages)
 

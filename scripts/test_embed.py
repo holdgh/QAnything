@@ -15,12 +15,18 @@ logger = logging.getLogger(__name__)
 
 # 测试配置
 TEST_DURATION = 10  # 测试持续时间（秒）
-BATCH_SIZES = [1, 2, 4, 8, 16]
-NUM_THREADS = [1, 2, 4]
-MODEL_PATH = "/root/models/linux_onnx/embedding_model_configs_v0.0.1/embed.onnx"  # 请替换为实际的模型路径
+# BATCH_SIZES = [1, 2, 4, 8, 16]
+# 批处理尺寸
+BATCH_SIZES = [1, 2]
+# NUM_THREADS = [1, 2, 4]
+# 线程数
+NUM_THREADS = [1, 2]
+# MODEL_PATH = "/root/models/linux_onnx/embedding_model_configs_v0.0.1/embed.onnx"  # 请替换为实际的模型路径
+MODEL_PATH = "D:\project\AI\QAnything\qanything_kernel\dependent_server\embedding_server\embedding_model_configs_v0.0.1\embed.onnx"
 
 LOCAL_EMBED_MAX_LENGTH = 512
-LOCAL_EMBED_PATH = "/root/models/linux_onnx/embedding_model_configs_v0.0.1"
+# LOCAL_EMBED_PATH = "/root/models/linux_onnx/embedding_model_configs_v0.0.1"
+LOCAL_EMBED_PATH = "D:\project\AI\QAnything\qanything_kernel\dependent_server\embedding_server\embedding_model_configs_v0.0.1"
 LOCAL_EMBED_BATCH = 16
 
 
@@ -80,16 +86,20 @@ class EmbeddingAsyncBackend:
         logger.info(f"embed_documents number: {len(texts)}")
         inputs_onnx = self._tokenizer(texts, padding=True, truncation=True, max_length=LOCAL_EMBED_MAX_LENGTH,
                                       return_tensors=self.return_tensors)
-        inputs_onnx = {k: v for k, v in inputs_onnx.items()}
-
+        # inputs_onnx = {k: v for k, v in inputs_onnx.items()}
+        # 处理异常：'[ONNXRuntimeError] Unexpected input data type. Actual: (tensor(int32)) , expected: (tensor(int64))'
+        # 输入为字典，包含两项，attention_mask和input_ids【对应值为向量，维数1*512】
+        inputs_onnx = {k: np.array(v, dtype=np.int64) for k, v in inputs_onnx.items()}
         # start_time = time.time()
+        # 输出维数：512*768
         outputs_onnx = self.session.run(output_names=['output'], input_feed=inputs_onnx)
         # debug_logger.info(f"onnx infer time: {time.time() - start_time}")
-
+        # 这里取输出的第一行，1*768
         embedding = outputs_onnx[0][:, 0]
         # logger.info(f'embedding shape: {embedding.shape}')
-
+        # 求矩阵的L2范数【元素平方和的算术平方根】
         norm_arr = np.linalg.norm(embedding, axis=1, keepdims=True)
+        # 利用L2范数做归一化处理，使得结果向量的长度为1
         embeddings_normalized = embedding / norm_arr
 
         return embeddings_normalized.tolist()
@@ -149,8 +159,9 @@ async def client(backend, texts, request_count):
 
 
 # 运行测试
-async def run_test(batch_size, num_threads):
+async def run_test(batch_size, num_threads: int):
     backend = EmbeddingAsyncBackend(MODEL_PATH, use_cpu=True, num_threads=num_threads, batch_size=batch_size)
+    # 生成1000条测试数据，每条数据最长为2048
     test_data = generate_test_data()
 
     start_time = time.time()
@@ -166,8 +177,12 @@ async def run_test(batch_size, num_threads):
     while time.time() < end_time:
         tasks = []
         for _ in range(10):  # 模拟10个并发客户端
+            # 从1000个测试数据中，随机选择[batch_size, batch_size * 8)个测试数据，作为一个embedding任务
+            # texts = [test_data[np.random.randint(0, len(test_data))] for _ in
+            #          range(random.randint(batch_size, batch_size * 8))]
+            # 这里调整为固定2个，降低测试程序的运行时间
             texts = [test_data[np.random.randint(0, len(test_data))] for _ in
-                     range(random.randint(batch_size, batch_size * 8))]
+                     range(2)]
             tasks.append(asyncio.create_task(client(backend, texts, 1)))
             total_texts += len(texts)
 
