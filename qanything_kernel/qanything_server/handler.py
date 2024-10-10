@@ -870,6 +870,7 @@ async def local_doc_chat(req: request):
             debug_logger.info("start generate...")
             # 重构问题，获取源文档列表，对源文档列表去重、重排处理，在源文档列表中检索问题答案，有结果则返回【如果只需要检索文档，则直接返回源文档列表】
             # 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
+            # 这里涉及到了get_knowledge_based_answer利用yield关键字返回的生成器，遍历生成器和遍历列表效果一样，但是占用的存储空间不同
             async for resp, next_history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                                     max_token=max_token,
                                                                                     kb_ids=kb_ids,

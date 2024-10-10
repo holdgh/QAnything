@@ -153,7 +153,7 @@ class LocalDocQA:
             doc.metadata['embed_version'] = self.embeddings.embed_version
             if 'score' not in doc.metadata:
                 # 当得分不在文档元数据中【向量数据库检索结果有评分，es检索没有评分，这里针对es检索计算评分】，按照该规则计算得分【1-索引值除以文档总数】【索引越小的文档得分越高，第一个文档得分为1】
-                doc.metadata['score'] = 1 - (idx / len(query_docs))  # TODO 这个score怎么获取呢
+                doc.metadata['score'] = 1 - (idx / len(query_docs))  # TODO 这个score怎么获取呢【es检索结果是按照相似度降序排列的，因此排序靠前的相似度较高，其得分也就较高】【存在另一个问题：向量检索的得分和这里的得分在数据大小意义，es得分设置的方式是否合理呢？】
             # 将当前文档追加到源文档列表中
             source_documents.append(doc)
         # if cosine_thresh:
@@ -575,7 +575,7 @@ class LocalDocQA:
             source_documents += web_search_results
         # ==========联网搜索处理-end===========
         # ============对源文档列表进行去重、rerank处理、得分过滤处理-start=============
-        # 对源文档列表进行去重【依据文档内容利用集合去重】
+        # 对源文档列表进行去重【依据文档内容利用集合去重】【传入的知识库id为空，或者知识库下的有效文件【status为green】为空，都会造成源文档列表为空】
         source_documents = deduplicate_documents(source_documents)
         if rerank and len(source_documents) > 1 and num_tokens_rerank(query) <= 300:
             # 如果进行重排，且源文档列表非空，且当前问题rerank处理的token数量不超过300，则进行以下处理
@@ -583,6 +583,7 @@ class LocalDocQA:
                 t1 = time.perf_counter()
                 debug_logger.info(f"use rerank, rerank docs num: {len(source_documents)}")
                 # 对源文档列表进行重排处理【异步调用本地rerank服务，获取每个文档对于问题的得分，并按照得分从大到小进行排序】
+                # TODO 注意：重排这里用的query是condense_question，而检索文档用到的query是retrieval_query。二者在用户query与condense_question不相似时才会一致。这是合理的。【在重构query异常时，用户query与condense_question一致】但为什么非要用到condense_question呢？
                 source_documents = await self.rerank.arerank_documents(condense_question, source_documents)
                 t2 = time.perf_counter()
                 # 记录源文档列表重排消耗时间
@@ -679,7 +680,7 @@ class LocalDocQA:
                 prompt_template = SIMPLE_PROMPT_TEMPLATE.replace("{{today}}", today).replace("{{now}}", now).replace(
                     "{{custom_prompt}}", custom_prompt)
             else:
-                # 如果入参中的提示词为空，则声明一个simple_custom_prompt，依据simple_custom_prompt、当前日期和当前时间替换系统提示词模板中的相应占位符生成提示词prompt_template
+                # 如果入参中的提示词【来源于问答接口入参或机器人信息中的提示词】为空，则声明一个simple_custom_prompt，依据simple_custom_prompt、当前日期和当前时间替换系统提示词模板中的相应占位符生成提示词prompt_template
                 simple_custom_prompt = """
                 - If you cannot answer based on the given information, you will return the sentence \"抱歉，已知的信息不足，因此无法回答。\". 
                 """
@@ -954,7 +955,7 @@ class LocalDocQA:
                 return new_docs
             # 获取first_file_dict['doc_ids']的最小值和最大值
             doc_limit = [min(first_file_dict['doc_ids']), max(first_file_dict['doc_ids'])]
-            # 依据第一个文件id获取经排序【先根据文档索引限制参数doc_limit对怕【依据文件id查询数据库得到的文档列表结果】进行切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
+            # 依据第一个文件id获取经排序【先根据文档索引限制参数doc_limit对依据文件id查询数据库得到的文档列表结果进行索引切片，再对切片后的数据按照文档id从小到大排序】处理的文档json_data字段，分别得到两个完整文档，一个内容含有图片，一个内容不含图片
             first_completed_doc_limit, first_completed_doc_limit_with_figure = self.get_completed_document(
                 first_file_dict['file_id'], doc_limit)
             # 对不含图片的完整文档设置得分

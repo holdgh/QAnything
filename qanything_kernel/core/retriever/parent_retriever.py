@@ -388,7 +388,7 @@ class ParentRetriever:
             调用链路：es_store.asimilarity_search【实际是VectorStore的asimilarity_search方法】--》VectorStore的similarity_search抽象方法--》在ElasticsearchStore中实现了similarity_search方法
             由此可知，此处调用外部工具，直接根据query结合top_k和filter参数进行es检索
             """
-            # es检索这里只取了文档，没有取得分
+            # es检索这里只取了文档，没有取得分【文档是按照相似度降序排列的】
             es_sub_docs = await self.es_store.asimilarity_search(query, k=top_k, filter=filter)
             es_ids = []
             # 获取向量数据库检索【milvus检索】的文档id列表
@@ -408,9 +408,9 @@ class ParentRetriever:
             # 计算es检索耗时，并收集es检索耗时数据【四舍五入，保留两位小数】
             time_record['retriever_search_by_es'] = round(time.perf_counter() - milvus_end_time, 2)
             debug_logger.info(f"Got {len(query_docs)} documents from vectorstore and {len(es_sub_docs)} documents from es, total {len(query_docs) + len(es_docs)} merged documents.")
-            # 在milvus检索结果中追加es检索文档列表
+            # 在milvus检索结果中追加es检索文档列表【注意es检索的文档在后面】
             query_docs.extend(es_docs)
         except Exception as e:
             debug_logger.error(f"Error in get_retrieved_documents on es_search: {e}")
-        # 返回最终检索得到的文档列表
+        # 返回最终检索得到的文档列表【其中es检索得到的文档没有得分】
         return query_docs
