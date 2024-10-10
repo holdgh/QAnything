@@ -94,7 +94,7 @@ class EmbeddingAsyncBackend:
         # debug_logger.info(f"onnx infer time: {time.time() - start_time}")
 
         # ========================onnxruntime框架第三阶段：模型运行-end=============================
-        # 提取词嵌入结果
+        # 提取词嵌入结果【这里只取第一行，为什么？】
         embedding = outputs_onnx[0][:, 0]
         embed_logger.info(f'embedding shape: {embedding.shape}')
         # 对词嵌入结果做正则化处理？

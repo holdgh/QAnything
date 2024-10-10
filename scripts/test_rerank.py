@@ -71,6 +71,7 @@ class RerankAsyncBackend:
 
     def merge_inputs(self, chunk1_raw, chunk2):
         chunk1 = deepcopy(chunk1_raw)
+        # 查询分词编码直接拼接了段落分词编码
         chunk1['input_ids'].extend(chunk2['input_ids'])
         chunk1['input_ids'].append(self.spe_id)
         chunk1['attention_mask'].extend(chunk2['attention_mask'])
@@ -112,6 +113,13 @@ class RerankAsyncBackend:
 
     async def get_rerank_async(self, query: str, passages: List[str]):
         # 这里的query和passages的维数与tot_batches的维数不一定对应，详情见tokenize_preproc
+        # tot_batches为分词编码切分拼接得到的符合rerank输入长度要求【不超过512】的分词编码，merge_inputs_idxs_sort为passages段落索引列表，且与tot_batches中的分词编码在切分意义下的段落索引对应
+        """
+        比如passages中有两个段落，p1,p2；
+        query分词编码长度与p1分词编码长度之和超过了512，则对p1分词编码进行重叠切分，得到两段p11和p12。其中，query分词编码长度与p11分词编码长度之和为512，query分词编码长度与p12分词编码长度之和小于512。这样p1就处理完毕，query分词编码长度与p2分词编码长度之和小于512。总体处理完毕，得到以下结果：
+            tot_batches：有三个元素，query_p11,query_p12,query_p2
+            merge_inputs_idxs_sort：对应有三个元素，0,0,1，用以标识tot_batches对应位置元素中段落在passages中的索引位置。比如对于tot_batches[0]，也即query_p11，其中的p11来自于p1，而p1在passages中的索引为0【merge_inputs_idxs_sort[0]】
+        """
         tot_batches, merge_inputs_idxs_sort = self.tokenize_preproc(query, passages)
 
         futures = []
