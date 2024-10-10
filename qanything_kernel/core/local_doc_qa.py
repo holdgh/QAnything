@@ -152,7 +152,7 @@ class LocalDocQA:
             # 将词嵌入版本添加到文档元数据中
             doc.metadata['embed_version'] = self.embeddings.embed_version
             if 'score' not in doc.metadata:
-                # 当得分不在文档元数据中，按照该规则计算得分【1-索引值除以文档总数】【索引越小的文档得分越高，第一个文档得分为1】
+                # 当得分不在文档元数据中【向量数据库检索结果有评分，es检索没有评分，这里针对es检索计算评分】，按照该规则计算得分【1-索引值除以文档总数】【索引越小的文档得分越高，第一个文档得分为1】
                 doc.metadata['score'] = 1 - (idx / len(query_docs))  # TODO 这个score怎么获取呢
             # 将当前文档追加到源文档列表中
             source_documents.append(doc)
@@ -607,7 +607,7 @@ class LocalDocQA:
             source_documents = high_score_faq_documents
         # ============对源文档列表进行去重、rerank处理、得分过滤处理-end=============
         # ==============遍历源文档列表，进行问答文档的问题与当前问题之间的相似度匹配，匹配成功，则返回-start===============
-        # FAQ完全匹配处理逻辑
+        # FAQ完全匹配处理逻辑【这里有按照rerank评分顺序进行检索，评分高的文档先被处理】
         for doc in source_documents:
             # 对源文档列表中的文档逐个匹配问题
             if doc.metadata['file_name'].endswith('.faq') and clear_string_is_equal(

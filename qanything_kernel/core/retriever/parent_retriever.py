@@ -388,6 +388,7 @@ class ParentRetriever:
             调用链路：es_store.asimilarity_search【实际是VectorStore的asimilarity_search方法】--》VectorStore的similarity_search抽象方法--》在ElasticsearchStore中实现了similarity_search方法
             由此可知，此处调用外部工具，直接根据query结合top_k和filter参数进行es检索
             """
+            # es检索这里只取了文档，没有取得分
             es_sub_docs = await self.es_store.asimilarity_search(query, k=top_k, filter=filter)
             es_ids = []
             # 获取向量数据库检索【milvus检索】的文档id列表
