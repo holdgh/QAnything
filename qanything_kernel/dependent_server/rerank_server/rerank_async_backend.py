@@ -49,6 +49,7 @@ class RerankAsyncBackend:
                   for i, name in enumerate(['input_ids', 'attention_mask', 'token_type_ids'])
                   if name in batch}
 
+        inputs = {k: np.array(v, dtype=np.int64) for k, v in inputs.items()}
         # 执行推理 输出为logits
         result = self.session.run(None, inputs)  # None表示获取所有输出
         # debug_logger.info(f"rerank result: {result}")

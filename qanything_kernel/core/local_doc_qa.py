@@ -516,6 +516,7 @@ class LocalDocQA:
             try:
                 t1 = time.perf_counter()
                 # 异步重构当前问题，并将新问题赋值给condense_question
+                # TODO 具体压缩逻辑，目前不清楚
                 condense_question = await rewrite_q_chain.condense_q_chain.ainvoke(
                     {
                         "chat_history": formatted_chat_history,

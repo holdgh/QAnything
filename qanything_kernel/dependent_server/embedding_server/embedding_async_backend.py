@@ -87,8 +87,9 @@ class EmbeddingAsyncBackend:
         # max_length为512
         inputs_onnx = self._tokenizer(texts, padding=True, truncation=True, max_length=LOCAL_EMBED_MAX_LENGTH,
                                       return_tensors=self.return_tensors)
-        inputs_onnx = {k: v for k, v in inputs_onnx.items()}
+        # inputs_onnx = {k: v for k, v in inputs_onnx.items()}
 
+        inputs_onnx = {k: np.array(v, dtype=np.int64) for k, v in inputs_onnx.items()}
         # start_time = time.time()
         outputs_onnx = self.session.run(output_names=['output'], input_feed=inputs_onnx)
         # debug_logger.info(f"onnx infer time: {time.time() - start_time}")

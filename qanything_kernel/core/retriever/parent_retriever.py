@@ -315,7 +315,7 @@ class ParentRetriever:
                 chunk_overlap=0,
                 # 长度函数：计算字符串的token数量
                 length_function=num_tokens_embed)
-            # 设置子切分尺寸，取默认子切分尺寸和当前父切分尺寸一半的最小值
+            # 设置子切分尺寸，取默认子切分尺寸和当前父切分尺寸一半的最小值【由此可知，子切分长度最大为400，而embedding模型的输入长度限制为512，此处子切分以满足embedding模型的分词编码长度要求且【子切分之间有重叠，重叠长度为子切分尺寸的1/4】尽量保持语义】
             child_chunk_size = min(DEFAULT_CHILD_CHUNK_SIZE, int(parent_chunk_size / 2))
             # 子切分工具【将换行符和中文标点符号作为分隔符列表，递归切分文档，切分所得文档内容尺寸不超过child_chunk_size】
             child_splitter = RecursiveCharacterTextSplitter(

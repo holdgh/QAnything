@@ -84,6 +84,8 @@ class EmbeddingAsyncBackend:
 
     def embed_documents(self, texts):
         logger.info(f"embed_documents number: {len(texts)}")
+        # 当文本长度为4000时，进行分词编码得到的input_ids长度为512
+        # 当文本长度为400时，进行分词编码得到的input_ids长度为291
         inputs_onnx = self._tokenizer(texts, padding=True, truncation=True, max_length=LOCAL_EMBED_MAX_LENGTH,
                                       return_tensors=self.return_tensors)
         # inputs_onnx = {k: v for k, v in inputs_onnx.items()}
@@ -143,6 +145,8 @@ def generate_test_data(num_samples=1000, max_length=2048):
 
     # 生成随机字符串的函数
     def generate_random_string(length):
+        # 固定文本长度，测试长度对embedding的影响
+        # length = 4000
         return ''.join(np.random.choice(list(all_chars), size=length))
 
     # 生成指定数量的随机长度字符串
