@@ -101,7 +101,7 @@ async def process_data(retriever, milvus_kb, mysql_client, file_info, time_recor
             asyncio.to_thread(local_file.split_file_to_docs),
             timeout=parse_timeout_seconds
         )
-        # 文件切片后，得到文档列表，遍历文档列表累计所有文档的内容长度，将内容长度之和赋值给content_length
+        # 文件切片后，得到文档列表【此时还未设置文档id】，遍历文档列表累计所有文档的内容长度，将内容长度之和赋值给content_length
         content_length = sum([len(doc.page_content) for doc in local_file.docs])
         if content_length > MAX_CHARS:
             # 如果总内容长度超过最大限制1000000

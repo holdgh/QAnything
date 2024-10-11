@@ -535,6 +535,7 @@ class LocalFileForInsert:
         遍历文档列表，为每个文档设置元数据【用户id、知识库id、文件id、文件名称、文件位置、文件路由、标题列表、是否含有表格、图片路径、页面id、headers、问答字典】
         对于文档内容较小的文档，执行合并处理，最终返回合并后的文档
         """
+        # ===============文档内容与元数据设置-start================
         # 这里给每个docs片段的metadata里注入file_id
         new_docs = []
         for doc in docs:
@@ -569,6 +570,8 @@ class LocalFileForInsert:
 
         # merge short docs
         insert_logger.info(f"before merge doc lens: {len(new_docs)}")
+        # ===============文档内容与元数据设置-end================
+        # ======================在文档内容【相对于embedding模型的token计算】token数量400限制下，对文档列表做相邻合并处理-start======================
         # 取默认切片尺寸400和实际切片尺寸一半的最小值
         child_chunk_size = min(DEFAULT_CHILD_CHUNK_SIZE, int(self.chunk_size / 2))
         # 合并的文档列表
@@ -582,13 +585,14 @@ class LocalFileForInsert:
                 last_doc = merged_docs[-1]
                 # insert_logger.info(f"doc_idx: {doc_idx}, doc_content: {doc.page_content[:100]}")
                 # insert_logger.info(f"last_doc_len: {num_tokens_embed(last_doc.page_content)}, doc_len: {num_tokens_embed(doc.page_content)}")
+                #
                 if num_tokens_embed(last_doc.page_content) + num_tokens_embed(doc.page_content) <= child_chunk_size or \
                         num_tokens_embed(doc.page_content) < child_chunk_size / 4:
                     # 最后一个文档和当前文档的内容token数量之和不超过child_chunk_size时，或者当前文档的内容token数量少于child_chunk_size的1/4时
                     # 将当前文档的内容按照换行符切分，得到临时内容切片列表
                     tmp_content_slices = doc.page_content.split('\n')
                     # print(last_doc.metadata['title_lst'], tmp_content)
-                    # 收集非最后一个文档标题行【有种相对最后一个文档去重的意思】的行内容列表
+                    # 收集临时内容切片列表中非最后一个文档标题行【有种相对最后一个文档去重的意思】的行内容列表
                     tmp_content_slices_clear = [line for line in tmp_content_slices if clear_string(line) not in
                                                 [clear_string(t) for t in last_doc.metadata['title_lst']]]
                     # 利用换行符将上述行内容列表拼接为临时文档内容
@@ -612,5 +616,6 @@ class LocalFileForInsert:
                     merged_docs.append(doc)
         # 打印合并后的文档列表长度
         insert_logger.info(f"after merge doc lens: {len(merged_docs)}")
+        # # ======================在文档内容【相对于embedding模型的token计算】token数量400限制下，对文档列表做相邻合并处理-end======================
         # 更新切片所得文档列表
         self.docs = merged_docs
