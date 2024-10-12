@@ -388,7 +388,7 @@ class ParentRetriever:
             调用链路：es_store.asimilarity_search【实际是VectorStore的asimilarity_search方法】--》VectorStore的similarity_search抽象方法--》在ElasticsearchStore中实现了similarity_search方法
             由此可知，此处调用外部工具，直接根据query结合top_k和filter参数进行es检索
             """
-            # es检索这里只取了文档，没有取得分【文档是按照相似度降序排列的】
+            # es检索这里只取了文档【子切分文档之间可能有重叠，而子切分的文档保存到了es中，如何处理这里的重叠呢？】，没有取得分【文档是按照相似度降序排列的】
             es_sub_docs = await self.es_store.asimilarity_search(query, k=top_k, filter=filter)
             es_ids = []
             # 获取向量数据库检索【milvus检索】的文档id列表
@@ -398,7 +398,7 @@ class ParentRetriever:
                 if self.retriever.id_key in d.metadata and d.metadata[self.retriever.id_key] not in es_ids and d.metadata[self.retriever.id_key] not in milvus_doc_ids:
                     # 如果es检索结果文档元数据中含有文档id且该文档id不在es检索文档id列表和不在milvus检索文档id列表中，则将该文档id收集到es检索文档id列表中
                     es_ids.append(d.metadata[self.retriever.id_key])
-            # 依据es检索文档id列表获取es检索文档
+            # 依据es检索文档id列表去MySQL数据库检索文档【这里就处理了es文档本身的重叠问题】
             es_docs = await self.retriever.docstore.amget(es_ids)
             # 过滤掉es检索空文档
             es_docs = [d for d in es_docs if d is not None]
