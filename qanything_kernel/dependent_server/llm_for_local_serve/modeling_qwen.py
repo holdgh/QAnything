@@ -157,7 +157,7 @@ class QwenTritonModel(object):
 
         if max_new_tokens < 0:
             max_new_tokens = 0
-
+        # 利用from tritonclient import grpc as grpcclient中的client的async_stream_infer方法调用大模型能力
         with grpcclient.InferenceServerClient(self.model_url, verbose=False) as client:
             request_data = []
             request = np.array([query]).astype(np.uint32)
