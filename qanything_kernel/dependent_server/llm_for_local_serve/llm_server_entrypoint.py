@@ -87,7 +87,7 @@ def is_process_running(pid: int) -> bool:
     else:
         return True
 
-
+# 真正调用大模型进行推理应用的方法
 def generator_llm(params: OrderedDict) -> str:
     def insert_error(resp_data: dict, error_enum) -> None:
         resp_data["text"] = error_enum.desc
@@ -139,7 +139,7 @@ def generator_llm(params: OrderedDict) -> str:
         }
 
         return tuple([infer_decode_args, params])
-
+    # ===================上述定义的三个方法，依次用于：处理异常响应、提取响应结果、解析入参===================
     ## 解析参数
     infer_decode_args, params = parse_params(params)
     request_id = infer_decode_args.get("request_id")
@@ -164,6 +164,7 @@ def generator_llm(params: OrderedDict) -> str:
     }
 
     result_queue = queue.Queue()
+    # 执行model.chat_stream操作，model = QwenTritonModel(model_url=args.model_url)，而QwenTritonModel在当前目录的modeling_qwen文件中有定义
     proc = threading.Thread(target=model.chat_stream, args=(query, result_queue), kwargs=infer_decode_args)
     proc.start()
     proc_pid = threading.get_native_id()
