@@ -109,6 +109,7 @@ if [ ! -d "models" ]; then
   echo "解压耗时: ${elapsed} 秒."
 
   # 重命名解压后的模型文件夹
+#  将下载的模型加压到qanything/model目录下【重命名前：qanything/qanything/model】
   if [ -d "model" ]; then
     mv "model" "models"
   elif [ -d "qanything/model" ]; then

@@ -58,7 +58,7 @@ start_time=$(date +%s)  # 记录开始时间
 
 # cd ~/.cache/ && tar -xvf /workspace/qanything_local/pip_deps.tar
 # cd /workspace/qanything_local/third_party/FastChat && pip install transformers==4.36.0 vllm==0.2.7 transformers-stream-generator==0.0.4 einops==0.6.0 accelerate==0.21.0 && pip install -e .
-
+# ==============================检测及安装transformer、vllm-start===========================
 # 获取默认的 MD5 校验和
 default_checksum=$(cat /workspace/qanything_local/third_party/checksum.config)
 # 计算FastChat文件夹下所有文件的 MD5 校验和
@@ -77,7 +77,7 @@ if [[ "$install_deps" != *"vllm"* ]]; then
     cd /workspace/qanything_local/third_party/FastChat && pip install transformers==4.36.0 vllm==0.2.7 transformers-stream-generator==0.0.4 einops==0.6.0 accelerate==0.21.0 && pip install -e . 
     checksum=$(find /workspace/qanything_local/third_party/FastChat -type f -exec md5sum {} + | awk '{print $1}' | sort | md5sum | awk '{print $1}') && echo "$checksum" > /workspace/qanything_local/third_party/checksum.config
 fi
-
+# ==============================检测及安装transformer、vllm-end===========================
 mkdir -p /model_repos/QAEnsemble_base /model_repos/QAEnsemble_embed /model_repos/QAEnsemble_rerank /model_repos/monitor_logs
 if [ ! -L "/model_repos/QAEnsemble_base/base" ]; then
   cd /model_repos/QAEnsemble_base && ln -s /model_repos/QAEnsemble/base .
@@ -110,11 +110,13 @@ else
 fi
 echo "GPU ID: $gpuid1, $gpuid2"
 
-
+#==================部署大模型-start==================
 if [ "$runtime_backend" = "default" ]; then
     echo "Executing default FastTransformer runtime_backend"
     # start llm server
     # 判断一下，如果gpu_id1和gpu_id2相同，则只启动一个triton_server
+#    ====================利用tritonserver部署目录QAnything/qanything/model/models下的大模型====================
+# /model_repos/QAEnsemble在docker配置文件中qanything服务配置处有对目录/models【见run.sh中大模型的下载与解压处理】的挂载定义
     if [ $gpuid1 -eq $gpuid2 ]; then
         echo "The triton server will start on $gpuid1 GPU"
         CUDA_VISIBLE_DEVICES=$gpuid1 nohup /opt/tritonserver/bin/tritonserver --model-store=/model_repos/QAEnsemble --http-port=10000 --grpc-port=10001 --metrics-port=10002 --log-verbose=1 > /model_repos/QAEnsemble/QAEnsemble.log 2>&1 &
@@ -130,7 +132,7 @@ if [ "$runtime_backend" = "default" ]; then
         echo "RERANK_PORT=8001" >> /workspace/qanything_local/.env
         echo "EMBED_PORT=9001" >> /workspace/qanything_local/.env
     fi
-
+# ==============启动大模型中转服务，也即提供大模型服务api===============
     cd /workspace/qanything_local/qanything_kernel/dependent_server/llm_for_local_serve || exit
     nohup python3 -u llm_server_entrypoint.py --host="0.0.0.0" --port=36001 --model-path="tokenizer_assets" --model-url="0.0.0.0:10001" > llm.log 2>&1 &
     echo "The llm transfer service is ready! (1/8)"
@@ -189,7 +191,7 @@ else
         ;;
     esac
 fi
-
+# ==================部署大模型-end=====================
 # 默认ocr_use_gpu为True
 OCR_USE_GPU="True"
 
@@ -209,7 +211,7 @@ echo "===================================================="
 echo "******************** 重要提示 ********************"
 echo "===================================================="
 echo ""
-
+# ===================根据gpu大小推荐使用相应的大模型-start====================
 if [ "$GPU1_MEMORY_SIZE" -lt 8100 ]; then
     echo "检测到您的 GPU 显存小于 8GB，推荐使用 OpenAI 或其他在线大型语言模型 (LLM)。"
 elif [ "$GPU1_MEMORY_SIZE" -ge 8100 ] && [ "$GPU1_MEMORY_SIZE" -le 16400 ]; then
@@ -217,7 +219,7 @@ elif [ "$GPU1_MEMORY_SIZE" -ge 8100 ] && [ "$GPU1_MEMORY_SIZE" -le 16400 ]; then
 else
     echo "检测到您的 GPU 显存大于 16GB，推荐使用本地 7B 的语言模型。"
 fi
-
+# ===================根据gpu大小推荐使用相应的大模型-end====================
 echo ""
 echo "===================================================="
 echo "请根据您的显存情况选择合适的语言模型以获得最佳性能。"
