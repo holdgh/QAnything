@@ -17,6 +17,7 @@ from qanything_kernel.dependent_server.embedding_server.embedding_async_backend 
 from qanything_kernel.configs.model_config import LOCAL_EMBED_MODEL_PATH, LOCAL_EMBED_THREADS
 from qanything_kernel.utils.general_utils import get_time_async
 import argparse
+from scripts.consine_similarity import normalize_vector
 
 # 接收外部参数mode
 parser = argparse.ArgumentParser()
@@ -28,6 +29,15 @@ args = parser.parse_args()
 print("args:", args)
 
 app = Sanic("embedding_server")
+
+
+@app.route("/cosine", methods=["POST"])
+def cosine(request):
+    data = request.json
+    # 获取请求中的向量入参
+    x = data.get('x')
+    y = data.get('y')
+    return json(normalize_vector(x, y))
 
 
 @get_time_async
@@ -49,9 +59,9 @@ async def embedding(request):
 @app.listener('before_server_start')
 async def setup_onnx_backend(app, loop):
     # 服务启动前，设置onnx_backend属性为EmbeddingAsyncBackend对象【利用onnxruntime框架，基于词嵌入模型，对文本进行词向量转换处理】
-    app.ctx.onnx_backend = EmbeddingAsyncBackend(model_path=LOCAL_EMBED_MODEL_PATH, 
+    app.ctx.onnx_backend = EmbeddingAsyncBackend(model_path=LOCAL_EMBED_MODEL_PATH,
                                                  use_cpu=not args.use_gpu, num_threads=LOCAL_EMBED_THREADS)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=9001, workers=args.workers, debug=True)
+    app.run(host="0.0.0.0", port=9001, workers=args.workers)

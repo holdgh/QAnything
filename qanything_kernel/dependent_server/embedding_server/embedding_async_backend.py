@@ -103,7 +103,7 @@ class EmbeddingAsyncBackend:
         norm_arr = np.linalg.norm(embedding, axis=1, keepdims=True)
         # 每一行的元素对应除以该行的范数，得到归一化处理后的词向量【每一行的平方和等于1】
         embeddings_normalized = embedding / norm_arr
-        # 将每行归一化后的词向量矩阵转换为二维列表，并返回
+        # 将每行归一化后【方便计算余弦相似度】的词向量矩阵转换为二维列表，并返回
         return embeddings_normalized.tolist()
 
 
