@@ -115,7 +115,7 @@ if [ "$runtime_backend" = "default" ]; then
     echo "Executing default FastTransformer runtime_backend"
     # start llm server
     # 判断一下，如果gpu_id1和gpu_id2相同，则只启动一个triton_server
-#    ====================利用tritonserver部署目录QAnything/qanything/model/models下的大模型====================
+#    ====================利用tritonserver【这个是怎么来的？】部署目录QAnything/qanything/model/models下的大模型====================
 # /model_repos/QAEnsemble在docker配置文件中qanything服务配置处有对目录/models【见run.sh中大模型的下载与解压处理】的挂载定义
     if [ $gpuid1 -eq $gpuid2 ]; then
         echo "The triton server will start on $gpuid1 GPU"

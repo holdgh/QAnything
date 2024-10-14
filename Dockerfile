@@ -1,3 +1,14 @@
+# dockerfile是一种用于定义和构建docker镜像得文本文件。包含一系列的指令和参数，用于描述镜像的构建过程，包括基础镜像、软件包安装、文件拷贝、环境变量设置等。
+# 编写dockerfile可以将应用程序、环境和依赖项打包成一个独立的容器镜像【自定义构建过程，选择所需的软件和配置，设置环境变量，暴露端口等】，实现应用程序的可移植。
+# dockerfile基本结构：
+#   1、基础镜像【BASE IMAGE】：使用FROM指令指定基础镜像，作为构建镜像的起点。通常包含了操作系统和一些预装的软件及工具。
+#   2、构建过程指令：使用一系列指令来描述构建过程。RUN用于执行命令和安装软件包；COPY用于拷贝文件和目录；ADD用于拷贝和提取文件；WORKDIR用于设置工作目录。
+#   3、容器启动指令：使用CMD或ENTRYPOINT指令来定义容器启动时要执行的命令，也即默认的容器执行命令。
+# docker镜像构建步骤：
+#   1、编写dockerfile文件
+#   2、docker build 构建镜像
+#   3、docker run 运行镜像
+# triton设置
 ARG TRITON_VERSION=23.05
 ARG BASE_IMAGE=nvcr.io/nvidia/tritonserver:${TRITON_VERSION}-py3
 ARG PIP_OPTIONS="-i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn"
