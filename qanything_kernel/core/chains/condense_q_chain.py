@@ -44,5 +44,10 @@ Example output: `那北京哪里适合野炊呢？` # 直接返回新问题，�
             ]
         )
         # 构造压缩问题链，依赖压缩问题提示词、chatOpenAI模型
+        """
+        langChain表达式:
+        简单链结构：prompt【提示词模板】 | model【模型】 | output_parser【输出解析器】
+        执行步骤：将输入文本放入提示词模板生成提示词，将提示词给到模型生成响应结果【这里是一个AIMessage对象信息】，由输出解析器将结果输出
+        """
         self.condense_q_chain = self.condense_q_prompt | self.chat_model | StrOutputParser()
 
