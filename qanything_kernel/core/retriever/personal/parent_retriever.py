@@ -47,15 +47,17 @@ class SelfParentRetriever(ParentDocumentRetriever):
         # self.vectorstore.col.load()
         scores = []
         if self.search_type == "mmr":
-            sub_docs = await self.vectorstore.amax_marginal_relevance_search(
-                query, **self.search_kwargs
-            )
+            # sub_docs = await self.vectorstore.amax_marginal_relevance_search(
+            #     query, **self.search_kwargs
+            # )
+            sub_docs = []
         else:
             # 查询类型为：similarity，相似度查询
             # 调用SelfMilvus对象的asimilarity_search_with_score方法【该方法在其爷爷类VectorStore中有定义，具体实现位于其父类Milvus中定义的similarity_search_with_score方法。具体逻辑：调用词向量服务【similarity_search_with_score方法中的self.embedding_func.embed_query(query)，也即YouDaoEmbeddings中的_get_embedding_sync方法】将问题字符转换为词向量，然后依据词向量及其他条件查询向量数据库】进行查询
-            res = await self.vectorstore.asimilarity_search_with_score(
-                query, **self.search_kwargs
-            )
+            # res = await self.vectorstore.asimilarity_search_with_score(
+            #     query, **self.search_kwargs
+            # )
+            res = []
             # 提取查询结果中的得分【这里的得分是怎么来的？】和文档
             scores = [score for _, score in res]
             sub_docs = [doc for doc, _ in res]
@@ -223,9 +225,9 @@ class SelfParentRetriever(ParentDocumentRetriever):
         #         )，见vectorstore.py文件】
         #         的aadd_documents方法】
         # 调用链路：SelfMilvus类继承Milvus类，Milvus类继承VectorStore类，VectorStore类中定义了aadd_documents方法，其aadd_documents方法调用其aadd_texts方法，该方法在SelfMilvus类中有重写实现。因此此处关键逻辑在SelfMilvus类的aadd_texts方法中
-        res = await self.vectorstore.aadd_documents(embed_docs, time_record=time_record)
+        # res = await self.vectorstore.aadd_documents(embed_docs, time_record=time_record)
         # 打印日志，在向量数据库中的插入的数量
-        insert_logger.info(f'vectorstore insert number: {len(res)}, {res[0]}')
+        # insert_logger.info(f'vectorstore insert number: {len(res)}, {res[0]}')
         # es存储操作
         """
         【es_client.es_store，es_client=StoreElasticSearchClient()】
@@ -261,13 +263,14 @@ class SelfParentRetriever(ParentDocumentRetriever):
             # add_to_docstore默认值为True，在insert_files_server调用时，此处对未进行子切分的文档列表进行存储【在当前方法aadd_documents的调用处，insert_documents方法中，设置了self.retriever的docstore=MysqlStore(self.mysql_client)，所以此处为数据库存储】
             await self.docstore.amset(full_docs)
         # 返回向量数据库存储返回值和时长记录字典
-        return len(res), time_record
+        # return len(res), time_record
+        return len([]), time_record
 
 
 class ParentRetriever:
     def __init__(self, vectorstore_client: VectorStoreMilvusClient, mysql_client: KnowledgeBaseManager, es_client: StoreElasticSearchClient):
         self.mysql_client = mysql_client
-        self.vectorstore_client = vectorstore_client
+        # self.vectorstore_client = vectorstore_client
         # This text splitter is used to create the parent documents
         init_parent_splitter = RecursiveCharacterTextSplitter(
             separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
@@ -283,13 +286,13 @@ class ParentRetriever:
             length_function=num_tokens_embed)
         # 此处依据ParentRetriever初始化函数中的向量存储client、MySQL数据库client、父子切分符列表生成了一个SelfParentRetriever对象，赋值给当前对象的retriever属性
         self.retriever = SelfParentRetriever(
-            vectorstore=vectorstore_client.local_vectorstore,
+            # vectorstore=vectorstore_client.local_vectorstore,
             docstore=MysqlStore(mysql_client),
             child_splitter=init_child_splitter,
             parent_splitter=init_parent_splitter,
         )
         self.backup_vectorstore: Optional[Milvus] = None
-        self.es_store = es_client.es_store
+        # self.es_store = es_client.es_store
         self.parent_chunk_size = DEFAULT_PARENT_CHUNK_SIZE
 
     @get_time_async
@@ -327,7 +330,7 @@ class ParentRetriever:
                 length_function=num_tokens_embed)
             self.retriever = SelfParentRetriever(
                 # 向量存储设置为向量数据库客户端
-                vectorstore=self.vectorstore_client.local_vectorstore,
+                # vectorstore=self.vectorstore_client.local_vectorstore,
                 # 文档存储设置为数据库客户端
                 docstore=MysqlStore(self.mysql_client),
                 # 子切分符
@@ -339,8 +342,10 @@ class ParentRetriever:
         # 当single_parent为False【默认值，表示非单亲，也即文档列表来自于多个文件。TODO 在insert_files_server中，处理文件是逐个处理的，此处为什么默认值为False呢？】时，ids为None；当single_parent为True时，ids为文档id列表
         ids = None if not single_parent else [doc.metadata['doc_id'] for doc in docs]
         # 插入【对文档列表进行父切分和子切分，将切分【换行符和中文符号】后的文档列表【经过一些元数据的处理后】存入向量数据库、es和数据库文档存储】文档列表，入参：文档列表、父切分尺寸、es存储、文档id列表、单亲标识
-        return await self.retriever.aadd_documents(docs, parent_chunk_size=parent_chunk_size,
-                                                   es_store=self.es_store, ids=ids, single_parent=single_parent)
+        # return await self.retriever.aadd_documents(docs, parent_chunk_size=parent_chunk_size,
+        #                                            es_store=self.es_store, ids=ids, single_parent=single_parent)
+
+        return await self.retriever.aadd_documents(docs, parent_chunk_size=parent_chunk_size, ids=ids, single_parent=single_parent)
 
     async def get_retrieved_documents(self, query: str, partition_keys: List[str], time_record: dict,
                                       hybrid_search: bool, top_k: int):

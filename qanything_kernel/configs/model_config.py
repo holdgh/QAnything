@@ -101,7 +101,8 @@ KB_SUFFIX = '_240625'
 # MILVUS_HOST_LOCAL = 'milvus-standalone-local'
 # MILVUS_PORT = 19530
 MILVUS_HOST_LOCAL = GATEWAY_IP
-MILVUS_PORT = 19540
+# MILVUS_PORT = 19540
+MILVUS_PORT = 19530
 MILVUS_COLLECTION_NAME = 'qanything_collection' + KB_SUFFIX
 
 # ES_URL = 'http://es-container-local:9200/'

@@ -75,11 +75,11 @@ class LocalDocQA:
         # MySQL数据库操作
         self.milvus_summary = KnowledgeBaseManager()
         # 向量数据库操作
-        # self.milvus_kb = VectorStoreMilvusClient()
+        self.milvus_kb = VectorStoreMilvusClient()
         # es搜索相关
         # self.es_client = StoreElasticSearchClient()
         # 文档插入与检索操作，由其初始化可知综合了向量数据库，MySQL数据库和es
-        # self.retriever = ParentRetriever(self.milvus_kb, self.milvus_summary, self.es_client)
+        self.retriever = ParentRetriever(self.milvus_kb, self.milvus_summary, None)
 
     @get_time
     def get_web_search(self, queries, top_k):

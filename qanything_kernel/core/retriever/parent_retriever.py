@@ -289,7 +289,8 @@ class ParentRetriever:
             parent_splitter=init_parent_splitter,
         )
         self.backup_vectorstore: Optional[Milvus] = None
-        self.es_store = es_client.es_store
+        # self.es_store = es_client.es_store
+        self.es_store = None
         self.parent_chunk_size = DEFAULT_PARENT_CHUNK_SIZE
 
     @get_time_async
