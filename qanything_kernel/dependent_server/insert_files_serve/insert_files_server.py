@@ -237,12 +237,12 @@ async def check_and_process(pool):
     # 创建数据库客户端
     mysql_client = KnowledgeBaseManager()
     # 创建向量数据库客户端
-    # milvus_kb = VectorStoreMilvusClient()
+    milvus_kb = VectorStoreMilvusClient()
     # 创建es客户端
-    # es_client = StoreElasticSearchClient()
+    es_client = StoreElasticSearchClient()
     # 由上述客户端创建检索对象
-    # retriever = ParentRetriever(milvus_kb, mysql_client, es_client)
-    retriever = ParentRetriever(None, mysql_client, None)
+    retriever = ParentRetriever(milvus_kb, mysql_client, es_client)
+    # retriever = ParentRetriever(None, mysql_client, None)
     while True:
         sleep_time = 3
         # worker_id 根据时间变化，每x分钟变一次，获取当前时间的分钟数

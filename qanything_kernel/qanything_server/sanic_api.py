@@ -31,7 +31,7 @@ WorkerManager.THRESHOLD = 6000
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', type=str, default='0.0.0.0', help='host')
 parser.add_argument('--port', type=int, default=8777, help='port')
-parser.add_argument('--workers', type=int, default=4, help='workers')
+parser.add_argument('--workers', type=int, default=1, help='workers')
 # 检查是否是local或online，不是则报错
 args = parser.parse_args()
 
