@@ -16,3 +16,5 @@ PID6=$!
 rerank模型【1G】下载方式：git clone https://www.modelscope.cn/netease-youdao/bce-reranker-base_v1.git
 embedding模型【1G】下载方式：git clone https://www.modelscope.cn/netease-youdao/bce-embedding-base_v1.git
 大语言模型【10G】下载方式：git clone https://www.modelscope.cn/netease-youdao/Qwen-7B-QAnything.git
+pdf解析模型和ocr模型下载方式：git clone https://www.modelscope.cn/netease-youdao/QAnything-pdf-parser.git
+注意事项：下载前，先执行git lfs install

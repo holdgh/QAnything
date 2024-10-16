@@ -33,7 +33,7 @@ WorkerManager.THRESHOLD = 6000
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--port', type=int, default=8110, help='port')
-parser.add_argument('--workers', type=int, default=4, help='workers')
+parser.add_argument('--workers', type=int, default=1, help='workers')
 # 检查是否是local或online，不是则报错
 args = parser.parse_args()
 
@@ -237,11 +237,12 @@ async def check_and_process(pool):
     # 创建数据库客户端
     mysql_client = KnowledgeBaseManager()
     # 创建向量数据库客户端
-    milvus_kb = VectorStoreMilvusClient()
+    # milvus_kb = VectorStoreMilvusClient()
     # 创建es客户端
-    es_client = StoreElasticSearchClient()
+    # es_client = StoreElasticSearchClient()
     # 由上述客户端创建检索对象
-    retriever = ParentRetriever(milvus_kb, mysql_client, es_client)
+    # retriever = ParentRetriever(milvus_kb, mysql_client, es_client)
+    retriever = ParentRetriever(None, mysql_client, None)
     while True:
         sleep_time = 3
         # worker_id 根据时间变化，每x分钟变一次，获取当前时间的分钟数
@@ -293,7 +294,10 @@ async def check_and_process(pool):
 
                         time_record = {}
                         # 进行文件处理【切片，保存至向量数据库】，获取处理状态、切片后所有文档的内容长度之和、切片数量、处理信息
-                        status, content_length, chunks_number, msg = await process_data(retriever, milvus_kb,
+                        # status, content_length, chunks_number, msg = await process_data(retriever, milvus_kb,
+                        #                                                                 mysql_client,
+                        #                                                                 file_info, time_record)
+                        status, content_length, chunks_number, msg = await process_data(retriever, None,
                                                                                         mysql_client,
                                                                                         file_info, time_record)
                         # 打印时间记录
