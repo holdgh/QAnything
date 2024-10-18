@@ -223,6 +223,7 @@ class SelfParentRetriever(ParentDocumentRetriever):
         #         )，见vectorstore.py文件】
         #         的aadd_documents方法】
         # 调用链路：SelfMilvus类继承Milvus类，Milvus类继承VectorStore类，VectorStore类中定义了aadd_documents方法，其aadd_documents方法调用其aadd_texts方法，该方法在SelfMilvus类中有重写实现。因此此处关键逻辑在SelfMilvus类的aadd_texts方法中
+        # res为向量数库数据的主键列表
         res = await self.vectorstore.aadd_documents(embed_docs, time_record=time_record)
         # 打印日志，在向量数据库中的插入的数量
         insert_logger.info(f'vectorstore insert number: {len(res)}, {res[0]}')
@@ -273,7 +274,7 @@ class ParentRetriever:
             separators=["\n\n", "\n", "。", "!", "！", "?", "？", "；", ";", "……", "…", "、", "，", ",", " ", ""],
             chunk_size=DEFAULT_PARENT_CHUNK_SIZE,
             chunk_overlap=0,
-            length_function=num_tokens_embed)
+            length_function=num_tokens_embed)# 这里使用embedding模型分词工具计算文档内容长度
         # # This text splitter is used to create the child documents
         # # It should create documents smaller than the parent
         init_child_splitter = RecursiveCharacterTextSplitter(

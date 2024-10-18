@@ -133,7 +133,7 @@ LOCAL_RERANK_PATH = os.path.join(root_path, 'qanything_kernel/dependent_server/r
 # rerank模型路径，在rerank_server启动前，用以创建RerankAsyncBackend对象
 LOCAL_RERANK_MODEL_PATH = os.path.join(LOCAL_RERANK_PATH, "rerank.onnx")
 
-LOCAL_EMBED_SERVICE_URL = "localhost:9001"
+LOCAL_EMBED_SERVICE_URL = "localhost:9002"
 LOCAL_EMBED_MODEL_NAME = 'embed'
 LOCAL_EMBED_MAX_LENGTH = 512
 LOCAL_EMBED_BATCH = 1
