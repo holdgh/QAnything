@@ -20,6 +20,15 @@ class PdfLoader(PdfParser):
         
 
     def load_to_markdown(self, filename, save_dir):
+        """
+        整体流程：
+        1、利用pdf外部工具包将pdf文件分块，并对文本块提取文字
+        2、利用layout模型对上述分块进行打标【当前块属于什么类型？文本、标题、图片、图标、公式】处理
+        3、将文本块合并为段落
+        4、将图片、图标、公式提取为图片，并保存在本地
+        5、将图片文件和段落合并为json数据【对于页面而言，仅考虑是否包含图片，而不考虑图片的位置】
+        6、将json数据转化为markdown文档
+        """
         os.makedirs(save_dir, exist_ok=True)
         json_dir = os.path.join(save_dir, os.path.basename(filename)[:-4]) + '.json'
         basedir = os.path.dirname(json_dir)
