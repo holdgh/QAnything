@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY models /root/models
 COPY nltk_data /root/nltk_data
 
-# 设置工作目录
+# 设置工作目录【镜像中的工具目录】
 WORKDIR /workspace
 
 # 清理 APT 缓存

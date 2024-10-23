@@ -120,11 +120,15 @@ services:
   qanything_local:
     container_name: qanything-container-local
     image: xixihahaliu01/qanything-win:v1.5.1
-#    容器启动后，运行脚本scripts/entrypoint.sh
+#    容器启动后，在容器中运行脚本scripts/entrypoint.sh
     command: /bin/bash -c "cd /workspace/QAnything && bash scripts/entrypoint.sh"
     privileged: true
     shm_size: '8gb'
     volumes:
+      # ${DOCKER VOLUME DIRECTORY:-.}:这是一个环境变量的用法。如果环境变量DOCKER_VOLUME_DIRECTORY 已设置，它的值会被使用;如果未设置，则使用当前目录 . 作为默认值。
+      # 观察可知，DOCKER_VOLUME_DIRECTORY尚未设置，因此这里代指当前目录QAnything/
+      # 此处意为将QAnything/挂载到容器中的/workspace/QAnything/
+      # 延申理解：容器qanything_local中/workspace/QAnything/为主机目录QAnything/，关于qanything服务的运行代码，来自于主机目录QAnything/
       - ${DOCKER_VOLUME_DIRECTORY:-.}/:/workspace/QAnything/
     ports:
       - "8777:8777"

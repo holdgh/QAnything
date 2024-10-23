@@ -1,1 +1,1 @@
-docker镜像构造文件
+docker镜像构造文件--基于python3.10.14镜像，封装python依赖包、模型文件【TikToken模型、rerank模型、embedding模型、pdf模型、ocr模型】
