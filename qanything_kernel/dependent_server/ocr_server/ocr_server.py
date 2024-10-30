@@ -467,7 +467,9 @@ class TextDetector(object):
 class OCRQAnything(object):
     def __init__(self, model_dir=None, device='cpu'):
         self.device = device
+        # 文本检测
         self.text_detector = TextDetector(model_dir, device)
+        # 文本识别
         self.text_recognizer = TextRecognizer(model_dir, device)
         self.drop_score = 0.5
         self.crop_image_res_index = 0
@@ -568,6 +570,7 @@ class OCRQAnything(object):
         start = time.time()
         ori_im = img.copy()
         # print(img.shape)
+        # 文本检测，dt_boxes为文本块列表
         dt_boxes, elapse = self.text_detector(img)
         time_dict['det'] = elapse
 
@@ -586,7 +589,7 @@ class OCRQAnything(object):
             tmp_box = copy.deepcopy(dt_boxes[bno])
             img_crop = self.get_rotate_crop_image(ori_im, tmp_box)
             img_crop_list.append(img_crop)
-
+        # 文本识别
         rec_res, elapse = self.text_recognizer(img_crop_list)
 
         time_dict['rec'] = elapse
@@ -613,12 +616,14 @@ async def setup_ocr(app, loop):
 
 @app.post("/ocr")
 async def ocr_api(request: Request):
+    # 从入参中获取图片的base64字符串
     img64 = safe_get(request, 'img64')
 
     if img64 is None:
         return json({"error": "No image data provided"}, status=400)
 
     try:
+        # 将base64字符串解码为数字矩阵400*400*3
         img_data = base64.b64decode(img64)
         img = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR)
     except Exception as e:
@@ -626,10 +631,19 @@ async def ocr_api(request: Request):
 
     if img is None:
         return json({"error": "Invalid image file"}, status=400)
-
+    # 将图片对应的数字矩阵输入ocr模型得出文字结果
+    # 分为两大步：将数字矩阵输入文本检测模型，得到文本块列表；将文本快列表输入文本识别模型，得到文本信息
     result = app.ctx.ocr(img)
     return json({"result": result})
 
+
+@app.post("/image-to-base64")
+async def image_to_base64(request: Request):
+    # 从入参中获取图片
+    data = request.json
+    file_path = data.get('image_path')
+    from get_base64_from_image import image_to_base64
+    return json({"result": image_to_base64(file_path)})
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=7001, workers=1)

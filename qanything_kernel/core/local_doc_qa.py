@@ -730,7 +730,7 @@ class LocalDocQA:
         prompt = self.generate_prompt(query=query,
                                       source_docs=source_documents,
                                       prompt_template=prompt_template)
-        # debug_logger.info(f"prompt: {prompt}")
+        debug_logger.info(f"输入给大模型的最终prompt: {prompt}")
         # 计算提示词和对话历史的token数量
         est_prompt_tokens = num_tokens(prompt) + num_tokens(str(chat_history))
         # 依据提示词、对话历史和流式回答标识调用大模型，获取回答结果列表，并遍历列表
