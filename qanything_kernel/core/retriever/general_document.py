@@ -92,6 +92,7 @@ class LocalFileForInsert:
         self.mysql_client = mysql_client
         if self.file_location == 'FAQ':
             # 当文件位置是FAQ时，表示文件为问答集
+            # 对于问答集文件，查询问答表获取问答集信息，并构造问答字典
             # 获取问答信息
             faq_info = self.mysql_client.get_faq(self.file_id)
             # 从问答信息中提取字段
@@ -399,6 +400,7 @@ class LocalFileForInsert:
         if self.faq_dict:
             # 问答字典非空，表示问答集模式
             # 直接利用文档字典构造文档对象列表
+            # 对于问答集，直接根据问答字典构造文档对象
             docs = [Document(page_content=self.faq_dict['question'], metadata={"faq_dict": self.faq_dict})]
         elif self.file_url:
             # 链接地址非空，表示链接，借助爬虫生成文档
@@ -517,7 +519,8 @@ class LocalFileForInsert:
         elif self.file_path.lower().endswith(".eml"):
             # 邮箱文件
             # 利用非结构化邮箱加载器获取文档列表
-            loader = UnstructuredEmailLoader(self.file_path, strategy="fast")
+            # loader = UnstructuredEmailLoader(self.file_path, strategy="fast")
+            loader = UnstructuredEmailLoader(self.file_path)
             docs = loader.load()
         elif self.file_path.lower().endswith(".csv"):
             # csv文件

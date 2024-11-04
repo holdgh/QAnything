@@ -176,7 +176,7 @@ class OpenAILLM:
                     complete_answer += chunk_js["answer"]
                 completion_tokens = self.num_tokens_from_messages([complete_answer])
                 total_tokens = prompt_tokens + completion_tokens
-
+            # 将历史记录中的最后一个元素赋值为当前问题和答案
             history[-1] = [prompt, complete_answer]
             answer_result = AnswerResult()
             answer_result.history = history

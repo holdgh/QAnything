@@ -339,6 +339,7 @@ async def upload_faqs(req: request):
     # 增加上传文件的功能和上传文件的检查解析
     file_status = {}
     if faqs is None:
+        # 将文件转换为问答集
         files = req.files.getlist('files')
         faqs = []
         for file in files:
@@ -371,6 +372,8 @@ async def upload_faqs(req: request):
     timestamp = now.strftime("%Y%m%d%H%M")
     debug_logger.info(f"start insert {len(faqs)} faqs to mysql, user_id: {user_id}, kb_id: {kb_id}")
     for faq in tqdm(faqs):
+        # 根据问答集创建文件信息
+        # 此处faq是字典
         ques = faq['question']
         if len(ques) > 512 or len(faq['answer']) > 2048:
             return sanic_json(
@@ -390,11 +393,14 @@ async def upload_faqs(req: request):
         #         "timestamp": local_doc_qa.milvus_summary.get_file_timestamp(faq_id)
         #     })
         #     continue
+        # 对于问答集，文件位置为FAQ，文件内容为''，异步文件处理会根据文件id去问答集表查询问答信息，构造成文档进行处理
         local_file = LocalFile(user_id, kb_id, faq, file_name)
         file_id = local_file.file_id
         file_location = local_file.file_location
         local_files.append(local_file)
+        # 添加问答集
         local_doc_qa.milvus_summary.add_faq(file_id, user_id, kb_id, faq['question'], faq['answer'], faq.get('nos_keys', ''))
+        # 添加问答知识库
         local_doc_qa.milvus_summary.add_file(file_id, user_id, kb_id, file_name, file_size, file_location,
                                              chunk_size, timestamp)
         # debug_logger.info(f"{file_name}, {file_id}, {msg}, {faq}")
@@ -1498,9 +1504,12 @@ async def update_chunks(req: request):
         return sanic_json({"code": 2004, "msg": "fail, DocId {} not found".format(doc_id)})
     doc = Document(page_content=update_content, metadata=doc_json['kwargs']['metadata'])
     doc.metadata['doc_id'] = doc_id
+    # 更新数据库文档内容信息
     local_doc_qa.milvus_summary.update_document(doc_id, update_content)
+    # 删除向量数据库对应文档id的文档信息
     expr = f'doc_id == "{doc_id}"'
     local_doc_qa.milvus_kb.delete_expr(expr)
+    # 插入当前文档到向量数据库和es存储
     await local_doc_qa.retriever.insert_documents([doc], chunk_size, True)
     return sanic_json({"code": 200, "msg": "success update doc_id {}".format(doc_id)})
 
