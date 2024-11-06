@@ -46,7 +46,8 @@ zhipuai==2.0.1.20240429
 langchain_elasticsearch==0.2.2
 tiktoken==0.7.0
 modelscope==1.13.0
-onnxruntime==1.17.1
+# onnxruntime==1.17.1
+onnxruntime-gpu==1.17.1
 cryptography==42.0.8
 shapely==2.0.4
 pyclipper==1.3.0.post5
