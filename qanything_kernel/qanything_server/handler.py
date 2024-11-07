@@ -1,3 +1,4 @@
+from qanything_kernel.core.chains.recognize_q_chain import RecognizeQuestionChain
 from qanything_kernel.core.local_file import LocalFile
 from qanything_kernel.core.local_doc_qa import LocalDocQA
 from qanything_kernel.utils.custom_log import debug_logger, qa_logger
@@ -34,6 +35,7 @@ INVALID_USER_ID = f"fail, Invalid user_id: . user_id 必须只含有字母，数
 # 获取环境变量GATEWAY_IP【host.docker.internal，在docker-compose-win.yaml中qanything容器里面的环境变量处有配置】
 GATEWAY_IP = os.getenv("GATEWAY_IP", "localhost")
 debug_logger.info(f"GATEWAY_IP: {GATEWAY_IP}")
+
 
 # 异步包装器，用于在后台执行带有参数的同步函数
 async def run_in_background(func, *args):
@@ -232,7 +234,8 @@ async def upload_files(req: request):
     if len(exist_files) + len(files) > 10000:
         # 如果数据库中知识库已有文件数量和入参中文件数量之和大于10000，则超出知识库文件数量限制，返回提示信息
         return sanic_json({"code": 2002,
-                           "msg": f"fail, exist files is {len(exist_files)}, upload files is {len(files)}, total files is {len(exist_files) + len(files)}, max length is 10000."})
+                           "msg": f"fail, exist files is {len(exist_files)}, upload files is {len(files)}, "
+                                  f"total files is {len(exist_files) + len(files)}, max length is 10000."})
 
     data = []
     local_files = []
@@ -287,7 +290,8 @@ async def upload_files(req: request):
         if chars and chars > MAX_CHARS:
             # 文件超过100万个字符，则给出警告日志，并将文件名追加到失败列表文件列表中，然后对下一个文件进行处理
             debug_logger.warning(f"fail, file {file_name} chars is {chars}, max length is {MAX_CHARS}.")
-            # return sanic_json({"code": 2003, "msg": f"fail, file {file_name} chars is too much, max length is {MAX_CHARS}."})
+            # return sanic_json({"code": 2003, "msg": f"fail, file {file_name} chars is too much, max length is {
+            # MAX_CHARS}."})
             # 列表的append方法：在列表末尾添加新的对象
             failed_files.append(file_name)
             continue
@@ -399,7 +403,8 @@ async def upload_faqs(req: request):
         file_location = local_file.file_location
         local_files.append(local_file)
         # 添加问答集
-        local_doc_qa.milvus_summary.add_faq(file_id, user_id, kb_id, faq['question'], faq['answer'], faq.get('nos_keys', ''))
+        local_doc_qa.milvus_summary.add_faq(file_id, user_id, kb_id, faq['question'], faq['answer'],
+                                            faq.get('nos_keys', ''))
         # 添加问答知识库
         local_doc_qa.milvus_summary.add_file(file_id, user_id, kb_id, file_name, file_size, file_location,
                                              chunk_size, timestamp)
@@ -479,7 +484,8 @@ async def list_docs(req: request):
     # 计算总页数
     total_pages = (total_count + page_limit - 1) // page_limit
     if page_id > total_pages and total_count != 0:
-        return sanic_json({"code": 2002, "msg": f'输入非法！page_id超过最大值，page_id: {page_id}，最大值：{total_pages}，请检查！'})
+        return sanic_json(
+            {"code": 2002, "msg": f'输入非法！page_id超过最大值，page_id: {page_id}，最大值：{total_pages}，请检查！'})
     # 计算当前页的起始和结束索引
     start_index = (page_id - 1) * page_limit
     end_index = start_index + page_limit
@@ -674,7 +680,8 @@ async def local_doc_chat(req: request):
         6、获取知识库id列表对应的有效文件列表，如果有效文件列表为空，则将知识库id列表置为空，否则更新相应知识库的最新问答时间
         7、判断流式标志，进行答案检索
             - 重构问题，获取源文档列表，对源文档列表去重、重排处理，在源文档列表中检索问题答案，有结果则返回【如果只需要检索文档，则直接返回源文档列表】
-            - 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
+            - 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token
+            数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
         10、根据流式标志返回问题回答结果
     """
     # time.perf_counter()返回性能计数器的值（以小数秒为单位）作为浮点数，即具有最高可用分辨率的时钟，以测量短持续时间。 它确实包括睡眠期间经过的时间，并且是系统范围的。
@@ -864,10 +871,28 @@ async def local_doc_chat(req: request):
         # 更新相应知识库的最新问答时间
         local_doc_qa.milvus_summary.update_knowledge_base_latest_qa_time(kb_id, qa_timestamp)
     # ==========依据知识库id列表获取有效的文件信息，存在有效文件信息则更新知识库最新问答时间-end============
+
+    # 意图识别-start
+    recognize_q_chain = RecognizeQuestionChain(model_name=model, openai_api_base=api_base, openai_api_key=api_key)
+    try:
+        result = await recognize_q_chain.recognize_q_chain.ainvoke(
+            {
+                "question": question,
+            },
+        )
+        debug_logger.info(f"recognize_q_chain result: {result}")
+        if recognize_q_chain.not_answer in result.split(','):
+            return sanic_json(
+                {"code": 2003, "msg": "抱歉，问题：{} 不属于当前知识库所涉及范畴，请联系开发者".format(question)})
+    except Exception as e:
+        debug_logger.error(f"recognize_q_chain error: {e}")
+    # 意图识别-end
+
     debug_logger.info("streaming: %s", streaming)
     if streaming:
         # 采取流式回答，边回答边返回
         debug_logger.info("start generate answer")
+
         # ===========流式回答，定义一个协程函数，利用ResponseStream流式输出-start==========
         async def generate_answer(response):
             """
@@ -875,7 +900,8 @@ async def local_doc_chat(req: request):
             """
             debug_logger.info("start generate...")
             # 重构问题，获取源文档列表，对源文档列表去重、重排处理，在源文档列表中检索问题答案，有结果则返回【如果只需要检索文档，则直接返回源文档列表】
-            # 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
+            # 在源文档列表中检索不到答案，则构造提示词模板，并对源文档列表进行预处理【满足大模型的token
+            # 数量限制，图片处理】，如果只检索文档而不需要答案，则返回源文档列表；否则，依据提示词模板、源文档列表和问题构造提示词，调用大模型获取精确答案和新的对话历史
             # 这里涉及到了get_knowledge_based_answer利用yield关键字返回的生成器，遍历生成器和遍历列表效果一样，但是占用的存储空间不同
             async for resp, next_history in local_doc_qa.get_knowledge_based_answer(model=model,
                                                                                     max_token=max_token,
@@ -911,7 +937,7 @@ async def local_doc_chat(req: request):
                     # result = resp['result']
                     time_record['chat_completed'] = round(time.perf_counter() - preprocess_start, 2)
                     if time_record.get('llm_completed', 0) > 0:
-                       time_record['tokens_per_second'] = round(
+                        time_record['tokens_per_second'] = round(
                             len(result) / time_record['llm_completed'], 2)
                     formatted_time_record = format_time_record(time_record)
                     chat_data = {'user_id': user_id, 'kb_ids': kb_ids, 'query': question, "model": model,
@@ -1106,7 +1132,8 @@ async def get_doc_completed(req: request):
     # 计算总页数
     total_pages = (total_count + page_limit - 1) // page_limit
     if page_id > total_pages and total_count != 0:
-        return sanic_json({"code": 2002, "msg": f'输入非法！page_id超过最大值，page_id: {page_id}，最大值：{total_pages}，请检查！'})
+        return sanic_json(
+            {"code": 2002, "msg": f'输入非法！page_id超过最大值，page_id: {page_id}，最大值：{total_pages}，请检查！'})
     # 计算当前页的起始和结束索引
     start_index = (page_id - 1) * page_limit
     end_index = start_index + page_limit
@@ -1153,7 +1180,8 @@ async def get_qa_info(req: request):
     debug_logger.info(f"only_need_count: {only_need_count}")
     if only_need_count:
         need_info = ["timestamp"]
-        qa_infos = local_doc_qa.milvus_summary.get_qalog_by_filter(need_info=need_info, user_id=user_id, time_range=time_range)
+        qa_infos = local_doc_qa.milvus_summary.get_qalog_by_filter(need_info=need_info, user_id=user_id,
+                                                                   time_range=time_range)
         # timestamp = now.strftime("%Y%m%d%H%M")
         # 按照timestamp，按照天数进行统计，比如20240628，20240629，20240630，计算每天的问答数量
         qa_infos = sorted(qa_infos, key=lambda x: x['timestamp'])
@@ -1197,7 +1225,8 @@ async def get_qa_info(req: request):
     # if len(qa_infos) > 100:
     #     pages = math.ceil(len(qa_infos) // 100)
     #     if page_id is None:
-    #         msg = f"检索到的Log数超过100，需要分页返回，总数为{len(qa_infos)}, 请使用page_id参数获取某一页数据，参数范围：[0, {pages - 1}], 本次返回page_id为0的数据"
+    #         msg = f"检索到的Log数超过100，需要分页返回，总数为{len(qa_infos)}, 请使用page_id参数获取某一页数据，参数范围：[0, {pages - 1}],
+    #         本次返回page_id为0的数据"
     #         qa_infos = qa_infos[:100]
     #         page_id = 0
     #     elif page_id >= pages:
@@ -1209,7 +1238,9 @@ async def get_qa_info(req: request):
     # else:
     #     msg = f"检索到的Log数为{len(qa_infos)}，一次返回所有数据"
     #     page_id = 0
-    return sanic_json({"code": 200, "msg": msg, "page_id": page_id, "page_limit": page_limit, "qa_infos": current_qa_infos, "total_count": total_count})
+    return sanic_json(
+        {"code": 200, "msg": msg, "page_id": page_id, "page_limit": page_limit, "qa_infos": current_qa_infos,
+         "total_count": total_count})
 
 
 @get_time_async
@@ -1489,7 +1520,9 @@ async def update_chunks(req: request):
     debug_logger.info(f"doc_id: {doc_id}")
     yellow_files = local_doc_qa.milvus_summary.get_files_by_status("yellow")
     if len(yellow_files) > 0:
-        return sanic_json({"code": 2002, "msg": f"fail, currently, there are {len(yellow_files)} files being parsed, please wait for all files to finish parsing before updating the chunk."})
+        return sanic_json({"code": 2002,
+                           "msg": f"fail, currently, there are {len(yellow_files)} files being parsed, please wait "
+                                  f"for all files to finish parsing before updating the chunk."})
     update_content = safe_get(req, 'update_content')
     debug_logger.info(f"update_content: {update_content}")
     chunk_size = safe_get(req, 'chunk_size', DEFAULT_PARENT_CHUNK_SIZE)
